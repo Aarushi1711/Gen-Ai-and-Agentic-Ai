@@ -3,10 +3,9 @@ from typing import Optional
 from datetime import datetime
 
 class ProjectCreate(BaseModel):
-    owner_id: int
     title: str
     idea_description: Optional[str] = None
-    input_type: str            # "text", "voice", "github", "zip"
+    input_type: str
     github_url: Optional[str] = None
     zip_filename: Optional[str] = None
     timeline: Optional[str] = None
