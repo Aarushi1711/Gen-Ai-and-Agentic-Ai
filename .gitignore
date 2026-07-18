@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 logs
 *.log
 npm-debug.log*
@@ -22,12 +21,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
-=======
 backend/venv/
 backend/.env
 backend/firebase-credentials.json
 **/__pycache__/
 *.pyc
-node_modules/
-.DS_Store
->>>>>>> 33fac4563f56540d6718091d992593b13f2f0009
