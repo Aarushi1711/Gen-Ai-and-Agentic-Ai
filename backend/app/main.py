@@ -6,6 +6,15 @@ from app.models import user, project, repo, report, roadmap
 from app.routers import project as project_router, auth as auth_router, repo as repo_router, report as report_router, roadmap as roadmap_router
 
 app = FastAPI(title="Aaroh AI Backend")
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for development; we'll restrict this later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 
