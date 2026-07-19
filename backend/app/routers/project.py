@@ -8,6 +8,7 @@ from app.schemas.project import ProjectCreate, ProjectResponse
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
+@router.post("", response_model=ProjectResponse)
 @router.post("/", response_model=ProjectResponse)
 def create_project(
     project: ProjectCreate,
@@ -35,6 +36,7 @@ def get_project(
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
+@router.get("", response_model=list[ProjectResponse])
 @router.get("/", response_model=list[ProjectResponse])
 def list_my_projects(
     db: Session = Depends(get_db),
