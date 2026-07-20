@@ -13,20 +13,14 @@ FIREBASE_WEB_API_KEY = "AIzaSyCa1RNOmzcT1AqI9zadKBfrK9kHFLLsp_w"  # move to env 
 
 
 @router.post("/signup")
-def signup(request: SignupRequest, db: Session = Depends(get_db)):
-    try:
-        firebase_user = firebase_auth.create_user(
-            email=request.email,
-            password=request.password,
-            display_name=request.name
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+def signup(request: SignupRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # current_user["uid"] comes from the verified Firebase token — no need to create the user again
     new_user = User(
-        firebase_uid=firebase_user.uid,
-        email=request.email,
-        name=request.name
+        firebase_uid=current_user["uid"],
+        email=current_user.get("email", request.email),
+        name=request.name,
+        role=request.role
+        
     )
     db.add(new_user)
     db.commit()
@@ -34,10 +28,9 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 
     return {
         "message": "User created successfully",
-        "firebase_uid": firebase_user.uid,
+        "firebase_uid": new_user.firebase_uid,
         "user_id": new_user.id
     }
-
 
 @router.post("/login")
 def login(email: str, password: str):
@@ -87,6 +80,7 @@ def read_current_user(
         "id": db_user.id,
         "email": db_user.email,
         "name": db_user.name,
+        "role": db_user.role,
         "background": db_user.background,
         "skills": db_user.skills,
         "goals": db_user.goals,

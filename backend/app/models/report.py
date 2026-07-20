@@ -11,5 +11,9 @@ class Report(Base):
     scalability_score = Column(Float, nullable=True)
     documentation_score = Column(Float, nullable=True)
     deployment_readiness_score = Column(Float, nullable=True)
-    ai_commentary = Column(Text, nullable=True)          # AI-generated explanation/notes
+    code_quality_score = Column(Float, nullable=True)
+    security_score = Column(Float, nullable=True)
+    performance_score = Column(Float, nullable=True)
+    ai_commentary = Column(Text, nullable=True)
+    category_details = Column(Text, nullable=True)  # JSON string: {"Architecture": {"summary": "...", "issues": ["...", "..."]}, ...}
     generated_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,5 +1,5 @@
 // API Configuration — swap these base URLs when connecting to the FastAPI backend
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://gen-ai-and-agentic-ai.onrender.com/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://gen-ai-and-agentic-ai.onrender.com';
 
 export const ENDPOINTS = {
   // Auth

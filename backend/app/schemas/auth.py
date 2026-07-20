@@ -4,3 +4,4 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
+    role: str

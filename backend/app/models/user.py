@@ -13,3 +13,4 @@ class User(Base):
     skills = Column(String, nullable=True)
     goals = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    role = Column(String, nullable=True)
