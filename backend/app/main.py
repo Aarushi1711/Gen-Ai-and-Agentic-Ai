@@ -2,8 +2,19 @@ from fastapi import FastAPI, Depends
 from sqlalchemy import text
 from app.core.database import engine, Base
 from app.core.security import get_current_user
-from app.models import user, project, repo, report, roadmap
-from app.routers import project as project_router, auth as auth_router, repo as repo_router, report as report_router, roadmap as roadmap_router
+from app.models import user, project, repo, report, roadmap, chat_message
+from app.routers import (
+    project as project_router,
+    auth as auth_router,
+    repo as repo_router,
+    report as report_router,
+    roadmap as roadmap_router,
+    rag,
+    mentor,
+    repository_rag,
+    repo_ingest,
+    report_generate,
+)
 
 app = FastAPI(title="Aaroh AI Backend")
 
@@ -14,6 +25,11 @@ app.include_router(auth_router.router)
 app.include_router(repo_router.router)
 app.include_router(report_router.router)
 app.include_router(roadmap_router.router)
+app.include_router(rag.router)
+app.include_router(mentor.router)
+app.include_router(repository_rag.router)
+app.include_router(repo_ingest.router)
+app.include_router(report_generate.router)
 
 @app.get("/health")
 def health_check():

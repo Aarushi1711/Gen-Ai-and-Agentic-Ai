@@ -1,0 +1,1 @@
+{"lc": 1, "type": "constructor", "id": ["langchain", "schema", "document", "Document"], "kwargs": {"metadata": {"source": "core\\config.py"}, "page_content": "from pydantic_settings import BaseSettings\n\nclass Settings(BaseSettings):\n    database_url: str\n\n    class Config:\n        env_file = \".env\"\n\nsettings = Settings()", "type": "Document"}}
