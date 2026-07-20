@@ -1,4 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import {
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { auth } from '../lib/firebase';
+import { ENDPOINTS } from '../config/api';
 
 export interface AuthUser {
   id: string;
@@ -14,6 +18,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<{ error: string | null }>;
   signup: (data: SignupData) => Promise<{ error: string | null }>;
   logout: () => Promise<void>;
+  getIdToken: () => Promise<string | null>;
 }
 
 interface SignupData {
@@ -23,14 +28,13 @@ interface SignupData {
   role: 'student' | 'developer' | 'founder' | 'researcher';
 }
 
-const STORAGE_KEY = 'aaroh_user';
-
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
   login: async () => ({ error: null }),
   signup: async () => ({ error: null }),
   logout: async () => {},
+  getIdToken: async () => null,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -38,68 +42,89 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setUser(JSON.parse(stored));
-    } catch {
-      // ignore malformed data
-    }
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const token = await firebaseUser.getIdToken();
+          const response = await fetch(ENDPOINTS.auth.me, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          if (response.ok) {
+            const backendUser = await response.json();
+            setUser({
+              id: backendUser.id,
+              email: backendUser.email,
+              name: backendUser.name,
+              role: backendUser.role,
+              avatar: backendUser.avatar,
+            });
+          } else {
+            setUser(null);
+          }
+        } catch {
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe;
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ error: string | null }> => {
-    if (!email || !password) return { error: 'Email and password are required.' };
-
-    // Check if a user with this email was previously signed up
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const existing: AuthUser & { _password?: string } = JSON.parse(stored);
-      if (existing.email === email) {
-        if (existing._password && existing._password !== password) {
-          return { error: 'Incorrect password.' };
-        }
-        const { _password: _, ...safeUser } = existing;
-        setUser(safeUser);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
-        return { error: null };
-      }
+  const getIdToken = async (): Promise<string | null> => {
+    if (!auth.currentUser) return null;
+    try {
+      return await auth.currentUser.getIdToken();
+    } catch {
+      return null;
     }
+  };
 
-    // Accept any credentials — create a session user on the fly
-    const newUser: AuthUser = {
-      id: `user_${Date.now()}`,
-      email,
-      name: email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      role: 'developer',
-    };
-    setUser(newUser);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newUser));
-    return { error: null };
+  const login = async (email: string, password: string): Promise<{ error: string | null }> => {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return { error: null };
+    } catch (error: any) {
+      return { error: error.message || 'Login failed. Please try again.' };
+    }
   };
 
   const signup = async ({ name, email, password, role }: SignupData): Promise<{ error: string | null }> => {
-    if (!name || !email || !password) return { error: 'All fields are required.' };
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const token = await userCredential.user.getIdToken();
 
-    const newUser: AuthUser = {
-      id: `user_${Date.now()}`,
-      email,
-      name,
-      role,
-    };
+      const response = await fetch(ENDPOINTS.auth.signup, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ email, password, name, role })
+      });
 
-    // Store with password so login can verify it later
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...newUser, _password: password }));
-    setUser(newUser);
-    return { error: null };
+      if (!response.ok) {
+        const errorData = await response.json();
+        await signOut(auth);
+        return { error: errorData.detail || 'Signup failed. Please try again.' };
+      }
+
+      return { error: null };
+    } catch (error: any) {
+      return { error: error.message || 'Signup failed. Please try again.' };
+    }
   };
 
   const logout = async () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setUser(null);
+    await signOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, getIdToken }}>
       {children}
     </AuthContext.Provider>
   );
