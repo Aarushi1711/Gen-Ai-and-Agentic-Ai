@@ -1,5 +1,15 @@
+# Virtual environments
+.venv/
+backend/.venv/
+backend/venv/
 venv/
-.env
-__pycache__/
-*.pyc
-firebase-credentials.json
+
+# Python cache
+**/__pycache__/
+*.py[cod]
+
+# ChromaDB
+backend/app/core/rag/chroma_db/
+
+# Generated parent docs
+backend/app/core/rag/parent_docs/

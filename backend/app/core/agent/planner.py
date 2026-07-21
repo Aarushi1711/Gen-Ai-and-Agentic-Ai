@@ -1,17 +1,13 @@
 """
 app/core/agent/planner.py
-
-The Planner Agent — the piece that decides WHICH of your RAG functions
-to call for a given question. Built with LangGraph's StateGraph.
-
-This does NOT reimplement retrieval or generation — it only routes to
-functions you already built and tested in app/core/rag/generate.py.
 """
 
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 
 from app.core.rag.generate import ask_mentor_smart, ask_about_repo, ask_ui_ux_review
+from app.core.agents.architecture_agent import generate_architecture_graph
+from app.core.rag.report_generator import generate_project_report
 
 
 class PlannerState(TypedDict):
@@ -20,11 +16,9 @@ class PlannerState(TypedDict):
     route: Optional[str]
     answer: Optional[str]
     sources: Optional[list]
+    data: Optional[dict]  # for structured (non-text) outputs like graphs/reports
 
 
-# Simple keyword-based routing. Fast, transparent, and easy to explain
-# in a demo. Can be upgraded later to an LLM-based classifier for more
-# nuance — not necessary for this to be a genuine working agent today.
 _REPO_SIGNALS = [
     "my code", "my repo", "my project", "this file", "this function",
     "review my", "my backend", "my auth", "bug in my", "explain this",
@@ -34,12 +28,24 @@ _UI_UX_SIGNALS = [
     "ui", "ux", "design", "layout", "component", "frontend look",
     "user interface", "user experience", "styling", "css", "tailwind",
 ]
+_ARCHITECTURE_SIGNALS = [
+    "architecture diagram", "show my architecture", "visualize my",
+    "architecture graph", "system diagram", "how are the pieces connected",
+]
+_REPORT_SIGNALS = [
+    "health score", "health report", "how healthy is my project",
+    "generate a report", "score my project", "project health",
+]
 
 
 def _classify(state: PlannerState) -> PlannerState:
     question = state["question"].lower()
 
-    if any(w in question for w in _UI_UX_SIGNALS):
+    if any(w in question for w in _ARCHITECTURE_SIGNALS):
+        state["route"] = "architecture"
+    elif any(w in question for w in _REPORT_SIGNALS):
+        state["route"] = "report"
+    elif any(w in question for w in _UI_UX_SIGNALS):
         state["route"] = "ui_ux"
     elif state.get("repo_id") and any(w in question for w in _REPO_SIGNALS):
         state["route"] = "repo"
@@ -70,6 +76,30 @@ def _answer_ui_ux(state: PlannerState) -> PlannerState:
     return state
 
 
+def _answer_architecture(state: PlannerState) -> PlannerState:
+    if not state.get("repo_id"):
+        state["answer"] = "I need a repository to analyze first — please upload or connect your project."
+        state["sources"] = []
+        return state
+    graph = generate_architecture_graph(state["repo_id"])
+    state["data"] = graph
+    state["answer"] = f"Here's your architecture diagram — {len(graph.get('nodes', []))} components identified."
+    state["sources"] = []
+    return state
+
+
+def _answer_report(state: PlannerState) -> PlannerState:
+    if not state.get("repo_id"):
+        state["answer"] = "I need a repository to analyze first — please upload or connect your project."
+        state["sources"] = []
+        return state
+    report = generate_project_report(state["repo_id"])
+    state["data"] = report
+    state["answer"] = report.get("ai_commentary", "Report generated.")
+    state["sources"] = []
+    return state
+
+
 def _route_decision(state: PlannerState) -> str:
     return state["route"]
 
@@ -80,6 +110,8 @@ def _build_graph():
     graph.add_node("answer_general", _answer_general)
     graph.add_node("answer_repo", _answer_repo)
     graph.add_node("answer_ui_ux", _answer_ui_ux)
+    graph.add_node("answer_architecture", _answer_architecture)
+    graph.add_node("answer_report", _answer_report)
 
     graph.set_entry_point("classify")
     graph.add_conditional_edges(
@@ -89,11 +121,15 @@ def _build_graph():
             "general": "answer_general",
             "repo": "answer_repo",
             "ui_ux": "answer_ui_ux",
+            "architecture": "answer_architecture",
+            "report": "answer_report",
         },
     )
     graph.add_edge("answer_general", END)
     graph.add_edge("answer_repo", END)
     graph.add_edge("answer_ui_ux", END)
+    graph.add_edge("answer_architecture", END)
+    graph.add_edge("answer_report", END)
 
     return graph.compile()
 
@@ -109,17 +145,11 @@ def get_agent():
 
 
 def ask_planner(question: str, repo_id: str = None) -> dict:
-    """
-    THIS is the main entry point for the whole agentic system.
-    The agent decides internally which RAG system(s) to use.
-
-    Returns:
-        {"answer": str, "sources": list[str], "route_used": str}
-    """
     agent = get_agent()
     result = agent.invoke({"question": question, "repo_id": repo_id})
     return {
         "answer": result["answer"],
-        "sources": result["sources"],
+        "sources": result.get("sources", []),
         "route_used": result["route"],
+        "data": result.get("data"),  # non-null only for architecture/report routes
     }

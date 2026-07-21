@@ -1,9 +1,9 @@
 import json
-import os
 import firebase_admin
 from firebase_admin import credentials, auth
+from app.core.config import settings
 
-firebase_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+firebase_json = settings.firebase_credentials_json
 
 if firebase_json:
     cred_dict = json.loads(firebase_json)

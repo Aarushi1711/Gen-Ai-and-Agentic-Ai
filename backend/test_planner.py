@@ -10,7 +10,7 @@ decides which RAG system to use, and you see which route it picked.
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.core.agent.planner import ask_planner
+from backend.app.core.agents.planner import ask_planner
 
 print("=" * 60)
 print("Aaroh AI — Planner Agent")
