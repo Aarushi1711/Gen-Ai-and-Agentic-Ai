@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Upload, MessageSquare, TrendingUp, Clock,
@@ -5,13 +6,21 @@ import {
 } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
 import { useAuth } from '../../context/AuthContext';
-import { mockProjects, mockRecentActivity } from '../../data/mockData';
+import { ENDPOINTS } from '../../config/api';
+import { mockRecentActivity } from '../../data/mockData'; // still mock — no backend endpoint yet
 
-const statusColors = {
-  active: 'bg-accent-100 dark:bg-accent-900 text-accent-700 dark:text-accent-300',
-  analyzing: 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300',
-  completed: 'bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-400',
-};
+// Real shape returned by your backend's /projects endpoint
+interface BackendProject {
+  id: number;
+  owner_id: number;
+  title: string;
+  idea_description: string | null;
+  input_type: string;
+  github_url: string | null;
+  zip_filename: string | null;
+  timeline: string | null;
+  created_at: string;
+}
 
 const activityIcons = {
   analysis: Activity,
@@ -46,8 +55,38 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, getIdToken } = useAuth();
+  const [projects, setProjects] = useState<BackendProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchProjects() {
+      try {
+        const token = await getIdToken();
+        const res = await fetch(ENDPOINTS.projects.list, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!res.ok) {
+          throw new Error('Failed to load projects');
+        }
+        const data: BackendProject[] = await res.json();
+        setProjects(data);
+      } catch (err) {
+        setError('Could not load your projects. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchProjects();
+  }, [getIdToken]);
 
   return (
     <AppLayout>
@@ -65,13 +104,13 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* Stats row */}
+        {/* Stats row — Total Projects is real, others still placeholders until those features exist */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Total Projects', value: '3', icon: Zap, color: 'text-primary-500', bg: 'bg-primary-50 dark:bg-primary-950' },
-            { label: 'Avg Health Score', value: '84', icon: Activity, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-950' },
-            { label: 'Chat Sessions', value: '12', icon: MessageSquare, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950' },
-            { label: 'Milestones Done', value: '9', icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950' },
+            { label: 'Total Projects', value: String(projects.length), icon: Zap, color: 'text-primary-500', bg: 'bg-primary-50 dark:bg-primary-950' },
+            { label: 'Avg Health Score', value: '—', icon: Activity, color: 'text-accent-500', bg: 'bg-accent-50 dark:bg-accent-950' },
+            { label: 'Chat Sessions', value: '—', icon: MessageSquare, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950' },
+            { label: 'Milestones Done', value: '—', icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950' },
           ].map(({ label, value, icon: Icon, color, bg }) => (
             <div key={label} className="card p-5 card-hover">
               <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center mb-3`}>
@@ -110,42 +149,57 @@ export default function DashboardPage() {
                 Add new <ArrowRight size={14} />
               </Link>
             </div>
-            <div className="space-y-3">
-              {mockProjects.map(p => (
-                <div key={p.id} className="card p-5 card-hover flex items-center gap-4">
-                  <div className="relative flex-shrink-0">
-                    <ScoreRing score={p.healthScore} />
-                    <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-surface-900 dark:text-surface-100">{p.healthScore}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-surface-900 dark:text-surface-100 truncate">{p.name}</h3>
-                      <span className={`badge ${statusColors[p.status]}`}>{p.status}</span>
+
+            {loading && (
+              <div className="card p-8 text-center text-muted">Loading your projects...</div>
+            )}
+
+            {!loading && error && (
+              <div className="card p-8 text-center text-red-500">{error}</div>
+            )}
+
+            {!loading && !error && projects.length === 0 && (
+              <div className="card p-8 text-center">
+                <p className="text-muted mb-3">You don't have any projects yet.</p>
+                <Link to="/upload" className="btn-primary inline-flex items-center gap-2">
+                  <Plus size={16} />Create your first project
+                </Link>
+              </div>
+            )}
+
+            {!loading && !error && projects.length > 0 && (
+              <div className="space-y-3">
+                {projects.map(p => (
+                  <div key={p.id} className="card p-5 card-hover flex items-center gap-4">
+                    <div className="relative flex-shrink-0">
+                      {/* healthScore placeholder until health-analysis backend exists */}
+                      <ScoreRing score={0} />
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-surface-900 dark:text-surface-100">—</span>
                     </div>
-                    <p className="text-sm text-muted mt-0.5 truncate">{p.description}</p>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      {p.techStack.slice(0, 3).map(t => (
-                        <span key={t} className="text-xs px-2 py-0.5 rounded bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-400">{t}</span>
-                      ))}
-                      {p.techStack.length > 3 && (
-                        <span className="text-xs text-muted">+{p.techStack.length - 3}</span>
-                      )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-semibold text-surface-900 dark:text-surface-100 truncate">{p.title}</h3>
+                        <span className="badge bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-400">
+                          {p.input_type}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted mt-0.5 truncate">{p.idea_description || 'No description provided'}</p>
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <p className="text-xs text-muted flex items-center gap-1">
+                        <Clock size={11} />{formatDate(p.created_at)}
+                      </p>
+                      <Link to="/health" className="text-xs text-primary-600 dark:text-primary-400 mt-1 hover:underline block">
+                        View report
+                      </Link>
                     </div>
                   </div>
-                  <div className="flex-shrink-0 text-right">
-                    <p className="text-xs text-muted flex items-center gap-1">
-                      <Clock size={11} />{p.lastUpdated}
-                    </p>
-                    <Link to="/health" className="text-xs text-primary-600 dark:text-primary-400 mt-1 hover:underline block">
-                      View report
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Recent activity */}
+          {/* Recent activity — still mock, no backend endpoint for this yet */}
           <div>
             <h2 className="section-title text-lg mb-4">Recent activity</h2>
             <div className="card divide-y divide-surface-100 dark:divide-surface-700">

@@ -1,12 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import {
   Activity, TrendingUp, AlertTriangle, CheckCircle,
-  ChevronDown, ChevronUp, Shield, Zap, FileText, Code2, Server, BarChart3
+  ChevronDown, ChevronUp, Shield, FileText, Code2, Server, Zap, Rocket
 } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
-import { mockHealthReport, mockProjects } from '../../data/mockData';
+import { useAuth } from '../../context/AuthContext';
+import { ENDPOINTS } from '../../config/api';
 
 type Status = 'excellent' | 'good' | 'warning' | 'critical';
+
+interface BackendReport {
+  id: number;
+  project_id: number;
+  architecture_score: number | null;
+  scalability_score: number | null;
+  documentation_score: number | null;
+  deployment_readiness_score: number | null;
+  code_quality_score: number | null;
+  security_score: number | null;
+  performance_score: number | null;
+  ai_commentary: string | null;
+  category_details: string | null; // JSON string
+  generated_at: string;
+}
+
+interface Category {
+  name: string;
+  score: number;
+  status: Status;
+  summary: string;
+  issues: string[];
+}
 
 const statusConfig: Record<Status, { color: string; bg: string; label: string; icon: React.ComponentType<{size?: number; className?: string}> }> = {
   excellent: { color: 'text-accent-600 dark:text-accent-400', bg: 'bg-accent-50 dark:bg-accent-950', label: 'Excellent', icon: CheckCircle },
@@ -19,25 +44,56 @@ const categoryIcons: Record<string, React.ComponentType<{size?: number; classNam
   Architecture: Server,
   Scalability: TrendingUp,
   Documentation: FileText,
+  'Deployment Readiness': Rocket,
   'Code Quality': Code2,
   Security: Shield,
   Performance: Zap,
 };
 
+function scoreToStatus(score: number): Status {
+  if (score >= 85) return 'excellent';
+  if (score >= 70) return 'good';
+  if (score >= 55) return 'warning';
+  return 'critical';
+}
+
+function buildCategories(report: BackendReport): Category[] {
+  const details: Record<string, { summary?: string; issues?: string[] }> = report.category_details
+    ? JSON.parse(report.category_details)
+    : {};
+
+  const scoreFields: [string, number | null][] = [
+    ['Architecture', report.architecture_score],
+    ['Scalability', report.scalability_score],
+    ['Documentation', report.documentation_score],
+    ['Deployment Readiness', report.deployment_readiness_score],
+    ['Code Quality', report.code_quality_score],
+    ['Security', report.security_score],
+    ['Performance', report.performance_score],
+  ];
+
+  return scoreFields
+    .filter(([, score]) => score !== null)
+    .map(([name, score]) => ({
+      name,
+      score: score as number,
+      status: scoreToStatus(score as number),
+      summary: details[name]?.summary || '',
+      issues: details[name]?.issues || [],
+    }));
+}
+
 function ScoreBar({ score, color }: { score: number; color: string }) {
   return (
     <div className="w-full bg-surface-100 dark:bg-surface-700 rounded-full h-2 overflow-hidden">
-      <div
-        className={`h-full rounded-full transition-all duration-700 ${color}`}
-        style={{ width: `${score}%` }}
-      />
+      <div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${score}%` }} />
     </div>
   );
 }
 
-function CategoryCard({ cat }: { cat: typeof mockHealthReport.categories[0] }) {
+function CategoryCard({ cat }: { cat: Category }) {
   const [expanded, setExpanded] = useState(false);
-  const config = statusConfig[cat.status as Status] || statusConfig.good;
+  const config = statusConfig[cat.status];
   const Icon = categoryIcons[cat.name] || Activity;
   const barColor = cat.score >= 85 ? 'bg-accent-500' : cat.score >= 70 ? 'bg-primary-500' : cat.score >= 55 ? 'bg-amber-500' : 'bg-red-500';
 
@@ -68,7 +124,7 @@ function CategoryCard({ cat }: { cat: typeof mockHealthReport.categories[0] }) {
 
       {expanded && (
         <div className="px-5 pb-5 border-t border-surface-100 dark:border-surface-700 pt-4 animate-fade-in">
-          <p className="text-sm text-surface-700 dark:text-surface-300 mb-3">{cat.summary}</p>
+          {cat.summary && <p className="text-sm text-surface-700 dark:text-surface-300 mb-3">{cat.summary}</p>}
           {cat.issues.length > 0 && (
             <div>
               <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide mb-2">Issues to address:</p>
@@ -100,10 +156,7 @@ function OverallScoreGauge({ score }: { score: number }) {
         <path d="M 14 80 A 56 56 0 0 1 126 80" fill="none" stroke="currentColor" strokeWidth="10" className="text-surface-200 dark:text-surface-700" strokeLinecap="round" />
         <path
           d="M 14 80 A 56 56 0 0 1 126 80"
-          fill="none"
-          stroke={color}
-          strokeWidth="10"
-          strokeLinecap="round"
+          fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
           strokeDasharray={`${dash} ${circ}`}
           style={{ transition: 'stroke-dasharray 1s ease-out' }}
         />
@@ -117,17 +170,93 @@ function OverallScoreGauge({ score }: { score: number }) {
 }
 
 export default function HealthPage() {
-  const [selectedProject] = useState(mockProjects[0]);
-  const report = mockHealthReport;
+  const { projectId } = useParams<{ projectId: string }>();
+  const { getIdToken } = useAuth();
+  const [projectName, setProjectName] = useState('');
+  const [report, setReport] = useState<BackendReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!projectId) return;
+
+    async function fetchData() {
+      try {
+        const token = await getIdToken();
+        const headers = { Authorization: `Bearer ${token}` };
+
+        const [projectRes, reportsRes] = await Promise.all([
+          fetch(ENDPOINTS.projects.get(projectId!), { headers }),
+          fetch(ENDPOINTS.health.report(projectId!), { headers }),
+        ]);
+
+        if (projectRes.ok) {
+          const project = await projectRes.json();
+          setProjectName(project.title);
+        }
+
+        if (!reportsRes.ok) throw new Error('Failed to load health report');
+        const reports: BackendReport[] = await reportsRes.json();
+
+        if (reports.length === 0) {
+          setReport(null);
+        } else {
+          const latest = reports.reduce((a, b) =>
+            new Date(a.generated_at) > new Date(b.generated_at) ? a : b
+          );
+          setReport(latest);
+        }
+      } catch {
+        setError('Could not load the health report. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, [projectId, getIdToken]);
+
+  if (loading) {
+    return (
+      <AppLayout>
+        <div className="max-w-5xl mx-auto"><div className="card p-8 text-center text-muted">Loading health report...</div></div>
+      </AppLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <AppLayout>
+        <div className="max-w-5xl mx-auto"><div className="card p-8 text-center text-red-500">{error}</div></div>
+      </AppLayout>
+    );
+  }
+
+  if (!report) {
+    return (
+      <AppLayout>
+        <div className="max-w-5xl mx-auto space-y-6">
+          <h1 className="page-title">Project Health</h1>
+          <div className="card p-8 text-center text-muted">
+            No health report has been generated for this project yet.
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const categories = buildCategories(report);
+  const overallScore = categories.length > 0
+    ? Math.round(categories.reduce((sum, c) => sum + c.score, 0) / categories.length)
+    : 0;
+  const allIssues = categories.flatMap(c => c.issues);
 
   return (
     <AppLayout>
       <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
-        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="page-title">Project Health</h1>
-            <p className="text-muted mt-1">{selectedProject.name}</p>
+            <p className="text-muted mt-1">{projectName}</p>
           </div>
           <div className="flex gap-2">
             <a href="/report" className="btn-secondary flex items-center gap-2 text-sm">
@@ -139,21 +268,20 @@ export default function HealthPage() {
           </div>
         </div>
 
-        {/* Overall score card */}
         <div className="card p-6">
           <div className="flex flex-col md:flex-row items-center gap-8">
             <div className="flex flex-col items-center">
-              <OverallScoreGauge score={report.overallScore} />
+              <OverallScoreGauge score={overallScore} />
               <p className="text-sm font-semibold text-surface-700 dark:text-surface-300 mt-1">Overall Health</p>
-              <p className="text-xs text-muted">Last analyzed {new Date(report.lastAnalyzed).toLocaleDateString()}</p>
+              <p className="text-xs text-muted">Last analyzed {new Date(report.generated_at).toLocaleDateString()}</p>
             </div>
             <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {report.categories.map(cat => (
+              {categories.map(cat => (
                 <div key={cat.name} className="text-center">
                   <div className="text-2xl font-bold text-surface-900 dark:text-surface-100">{cat.score}</div>
                   <div className="text-xs text-muted mt-0.5">{cat.name}</div>
-                  <div className={`text-xs font-medium mt-1 ${statusConfig[cat.status as Status]?.color || 'text-muted'}`}>
-                    {statusConfig[cat.status as Status]?.label}
+                  <div className={`text-xs font-medium mt-1 ${statusConfig[cat.status].color}`}>
+                    {statusConfig[cat.status].label}
                   </div>
                 </div>
               ))}
@@ -161,18 +289,22 @@ export default function HealthPage() {
           </div>
         </div>
 
-        {/* Radar / quick summary bars */}
+        {report.ai_commentary && (
+          <div className="card p-6">
+            <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-2">AI Summary</h2>
+            <p className="text-sm text-surface-700 dark:text-surface-300">{report.ai_commentary}</p>
+          </div>
+        )}
+
         <div className="card p-6">
           <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-4">Score Overview</h2>
           <div className="space-y-3">
-            {report.categories.map(cat => {
+            {categories.map(cat => {
               const barColor = cat.score >= 85 ? 'bg-accent-500' : cat.score >= 70 ? 'bg-primary-500' : 'bg-amber-500';
               return (
                 <div key={cat.name} className="flex items-center gap-3">
-                  <span className="w-28 text-sm text-surface-600 dark:text-surface-400 flex-shrink-0">{cat.name}</span>
-                  <div className="flex-1">
-                    <ScoreBar score={cat.score} color={barColor} />
-                  </div>
+                  <span className="w-32 text-sm text-surface-600 dark:text-surface-400 flex-shrink-0">{cat.name}</span>
+                  <div className="flex-1"><ScoreBar score={cat.score} color={barColor} /></div>
                   <span className="w-8 text-right text-sm font-semibold text-surface-900 dark:text-surface-100">{cat.score}</span>
                 </div>
               );
@@ -180,32 +312,30 @@ export default function HealthPage() {
           </div>
         </div>
 
-        {/* Category details */}
         <div>
           <h2 className="section-title text-lg mb-4">Detailed Analysis</h2>
           <div className="space-y-3">
-            {report.categories.map(cat => (
-              <CategoryCard key={cat.name} cat={cat} />
-            ))}
+            {categories.map(cat => <CategoryCard key={cat.name} cat={cat} />)}
           </div>
         </div>
 
-        {/* Priority fixes */}
-        <div className="card p-6 border-l-4 border-l-amber-500">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle size={18} className="text-amber-500" />
-            <h2 className="font-semibold text-surface-900 dark:text-surface-100">Priority Fixes</h2>
+        {allIssues.length > 0 && (
+          <div className="card p-6 border-l-4 border-l-amber-500">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle size={18} className="text-amber-500" />
+              <h2 className="font-semibold text-surface-900 dark:text-surface-100">Priority Fixes</h2>
+            </div>
+            <p className="text-sm text-muted mb-4">Address these issues to improve your score the most:</p>
+            <div className="space-y-2">
+              {allIssues.slice(0, 4).map((issue, i) => (
+                <div key={i} className="flex items-start gap-2.5 text-sm text-surface-700 dark:text-surface-300">
+                  <span className="w-5 h-5 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 text-xs flex items-center justify-center flex-shrink-0 font-bold mt-0.5">{i + 1}</span>
+                  {issue}
+                </div>
+              ))}
+            </div>
           </div>
-          <p className="text-sm text-muted mb-4">Address these issues to improve your score the most:</p>
-          <div className="space-y-2">
-            {report.categories.flatMap(c => c.issues).slice(0, 4).map((issue, i) => (
-              <div key={i} className="flex items-start gap-2.5 text-sm text-surface-700 dark:text-surface-300">
-                <span className="w-5 h-5 rounded-full bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 text-xs flex items-center justify-center flex-shrink-0 font-bold mt-0.5">{i + 1}</span>
-                {issue}
-              </div>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </AppLayout>
   );
