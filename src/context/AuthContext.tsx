@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
-  createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, User } from 'firebase/auth';
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut,
+  User,
+} from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { ENDPOINTS } from '../config/api';
 
@@ -41,31 +46,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchBackendUser = async (firebaseUser: User): Promise<AuthUser | null> => {
+    try {
+      const token = await firebaseUser.getIdToken();
+      const response = await fetch(ENDPOINTS.auth.me, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const backendUser = await response.json();
+      return {
+        id: backendUser.id,
+        email: backendUser.email,
+        name: backendUser.name,
+        role: backendUser.role,
+        avatar: backendUser.avatar,
+      };
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        try {
-          const token = await firebaseUser.getIdToken();
-          const response = await fetch(ENDPOINTS.auth.me, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-          if (response.ok) {
-            const backendUser = await response.json();
-            setUser({
-              id: backendUser.id,
-              email: backendUser.email,
-              name: backendUser.name,
-              role: backendUser.role,
-              avatar: backendUser.avatar,
-            });
-          } else {
-            setUser(null);
-          }
-        } catch {
-          setUser(null);
-        }
+        const backendUser = await fetchBackendUser(firebaseUser);
+        setUser(backendUser);
       } else {
         setUser(null);
       }
@@ -86,7 +97,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string): Promise<{ error: string | null }> => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+
+      // Verify a backend profile actually exists for this account.
+      // Prevents orphaned Firebase-only accounts from silently "logging in"
+      // and then getting bounced back out when /me 404s.
+      const backendUser = await fetchBackendUser(userCredential.user);
+      if (!backendUser) {
+        await signOut(auth);
+        return {
+          error: 'No profile found for this account. Please sign up again or contact support.',
+        };
+      }
+
+      setUser(backendUser);
       return { error: null };
     } catch (error: any) {
       return { error: error.message || 'Login failed. Please try again.' };
@@ -94,33 +118,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signup = async ({ name, email, password, role }: SignupData): Promise<{ error: string | null }> => {
+    let userCredential: Awaited<ReturnType<typeof createUserWithEmailAndPassword>> | null = null;
+
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const token = await userCredential.user.getIdToken();
 
       const response = await fetch(ENDPOINTS.auth.signup, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ email, password, name, role })
+        body: JSON.stringify({ email, password, name, role }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        await signOut(auth);
-        return { error: errorData.detail || 'Signup failed. Please try again.' };
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Signup failed. Please try again.');
       }
+
+      const backendUser = await fetchBackendUser(userCredential.user);
+      setUser(backendUser);
 
       return { error: null };
     } catch (error: any) {
+      // Roll back the Firebase account if the backend record was never created,
+      // so we never end up with an auth account that has no matching DB row.
+      if (userCredential) {
+        try {
+          await userCredential.user.delete();
+        } catch {
+          // If delete fails (e.g. requires recent login), at least sign out
+          // so the broken session doesn't linger.
+          await signOut(auth).catch(() => {});
+        }
+      }
       return { error: error.message || 'Signup failed. Please try again.' };
     }
   };
 
   const logout = async () => {
     await signOut(auth);
+    setUser(null);
   };
 
   return (
