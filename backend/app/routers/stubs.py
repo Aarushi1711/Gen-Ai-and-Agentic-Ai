@@ -45,6 +45,7 @@ def get_architecture(project_id: int, current_user: dict = Depends(get_current_u
 
 
  
+ 
 
 
 @router.get("/report/{project_id}/pdf")

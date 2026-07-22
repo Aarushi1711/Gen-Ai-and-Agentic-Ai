@@ -5,14 +5,16 @@ Repository RAG: indexes a user's uploaded GitHub repo / ZIP so questions
 like "explain this auth module" or "review my backend" can be answered
 with real context from THEIR code.
 
-Different from engineering_rag.py in one key way: it uses a Parent
-Document Retriever. Code is split into small chunks for accurate
-searching, but when a chunk matches, the retriever returns the FULL
-FILE it came from (the "parent") — not just the fragment — because
-reviewing code needs surrounding context, not an isolated snippet.
+Same Parent Document Retriever IDEA as before (search small chunks for
+accuracy, return the full file for context) — but implemented directly
+instead of using LangChain's ParentDocumentRetriever class. That class
+depends on langchain-classic's internal serialization, which kept
+breaking across package version mismatches. This version stores parent
+files as plain JSON on disk — no LangChain internals involved, so it
+can't break the same way again.
 
 Each repo gets its own isolated index (separate ChromaDB collection +
-separate parent-doc store), keyed by repo_id, so multiple projects
+separate parent-doc JSON file), keyed by repo_id, so multiple projects
 never mix results together.
 
 Two entry points:
@@ -22,49 +24,65 @@ Two entry points:
 """
 
 import os
+import json
+import uuid
 from pathlib import Path
 
-from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-
-# LangChain 1.x split some retrievers/storage into a separate
-# "langchain-classic" package. Try the new location first, fall back
-# to the old one, so this works regardless of which version you have.
-try:
-    from langchain_classic.retrievers import ParentDocumentRetriever
-    from langchain_classic.storage import LocalFileStore
-    from langchain_classic.storage._lc_store import create_kv_docstore
-except ImportError:
-    from langchain.retrievers import ParentDocumentRetriever
-    from langchain.storage import LocalFileStore
-    from langchain.storage._lc_store import create_kv_docstore
 
 from app.core.rag.embeddings import get_embeddings
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHROMA_BASE_DIR = os.path.join(_THIS_DIR, "chroma_db", "repository")
-DOCSTORE_BASE_DIR = os.path.join(_THIS_DIR, "parent_docs")
+PARENT_DOCS_DIR = os.path.join(_THIS_DIR, "parent_docs")
 
-# File types worth indexing. Add more as needed.
 CODE_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb", ".php",
     ".c", ".cpp", ".h", ".cs", ".rs", ".md", ".json", ".yaml", ".yml",
 }
 
-# Never index these — they're huge, generated, or irrelevant noise.
 EXCLUDED_DIRS = {
     "node_modules", ".git", "__pycache__", "venv", ".venv", "env",
     "dist", "build", ".next", "chroma_db", "parent_docs",
 }
 
-_retrievers: dict[str, ParentDocumentRetriever] = {}
+# Filenames that commonly hold real secrets, even if their extension
+# looks like harmless config. Checked against the filename only.
+SENSITIVE_FILENAME_MARKERS = (
+    ".env", "credential", "secret", "id_rsa", "id_ed25519", ".pem",
+    ".pfx", ".key", "service-account", "serviceaccount", "firebase-adminsdk",
+)
 
 
-def _load_repo_files(repo_path: str) -> list[Document]:
-    """Walk repo_path and load every code file into a Document,
-    skipping excluded folders and non-code files."""
-    docs = []
+def _is_sensitive_file(filename: str) -> bool:
+    lower = filename.lower()
+    return any(marker in lower for marker in SENSITIVE_FILENAME_MARKERS)
+
+_vector_stores: dict[str, Chroma] = {}
+
+
+def _parent_docs_path(repo_id: str) -> str:
+    os.makedirs(PARENT_DOCS_DIR, exist_ok=True)
+    return os.path.join(PARENT_DOCS_DIR, f"{repo_id}.json")
+
+
+def _load_parent_docs(repo_id: str) -> dict:
+    path = _parent_docs_path(repo_id)
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_parent_docs(repo_id: str, parent_docs: dict):
+    with open(_parent_docs_path(repo_id), "w", encoding="utf-8") as f:
+        json.dump(parent_docs, f)
+
+
+def _load_repo_files(repo_path: str) -> list[dict]:
+    """Walk repo_path and load every code file as {"content": str, "source": str}."""
+    files = []
     root = Path(repo_path)
 
     for file_path in root.rglob("*"):
@@ -73,6 +91,8 @@ def _load_repo_files(repo_path: str) -> list[Document]:
         if file_path.suffix not in CODE_EXTENSIONS:
             continue
         if any(part in EXCLUDED_DIRS for part in file_path.parts):
+            continue
+        if _is_sensitive_file(file_path.name):
             continue
 
         try:
@@ -84,34 +104,19 @@ def _load_repo_files(repo_path: str) -> list[Document]:
             continue
 
         relative_path = str(file_path.relative_to(root))
-        docs.append(Document(page_content=content, metadata={"source": relative_path}))
+        files.append({"content": content, "source": relative_path})
 
-    return docs
+    return files
 
 
-def _build_retriever(repo_id: str) -> ParentDocumentRetriever:
-    """Create (or reconnect to) the retriever for one specific repo."""
-    vector_store = Chroma(
-        collection_name=f"repo_{repo_id}",
-        embedding_function=get_embeddings(),
-        persist_directory=os.path.join(CHROMA_BASE_DIR, repo_id),
-    )
-
-    docstore_dir = os.path.join(DOCSTORE_BASE_DIR, repo_id)
-    os.makedirs(docstore_dir, exist_ok=True)
-    file_store = LocalFileStore(docstore_dir)
-    doc_store = create_kv_docstore(file_store)
-
-    # Small chunks for accurate matching. No parent_splitter is passed,
-    # so the ORIGINAL whole-file documents become the "parents" that
-    # get returned on a match.
-    child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
-
-    return ParentDocumentRetriever(
-        vectorstore=vector_store,
-        docstore=doc_store,
-        child_splitter=child_splitter,
-    )
+def _get_vector_store(repo_id: str) -> Chroma:
+    if repo_id not in _vector_stores:
+        _vector_stores[repo_id] = Chroma(
+            collection_name=f"repo_{repo_id}",
+            embedding_function=get_embeddings(),
+            persist_directory=os.path.join(CHROMA_BASE_DIR, repo_id),
+        )
+    return _vector_stores[repo_id]
 
 
 def ingest_repository(repo_path: str, repo_id: str):
@@ -119,46 +124,68 @@ def ingest_repository(repo_path: str, repo_id: str):
     Index one repository. Run this once after a user uploads/connects
     a repo (repo_path = local folder the repo was extracted/cloned to,
     repo_id = a unique id for this project, e.g. your DB's project id).
-
-    Safe to re-run — rebuilds that repo's index from scratch.
     """
-    docs = _load_repo_files(repo_path)
-    if not docs:
+    files = _load_repo_files(repo_path)
+    if not files:
         print(f"No code files found in {repo_path}")
         return
 
-    retriever = _build_retriever(repo_id)
-    retriever.add_documents(docs)
-    _retrievers[repo_id] = retriever
+    child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+    vector_store = _get_vector_store(repo_id)
+    parent_docs = _load_parent_docs(repo_id)
 
-    print(f"Ingested {len(docs)} files for repo_id='{repo_id}'")
+    texts, metadatas = [], []
+    for file in files:
+        parent_id = str(uuid.uuid4())
+        parent_docs[parent_id] = {"content": file["content"], "source": file["source"]}
+
+        chunks = child_splitter.split_text(file["content"])
+        for chunk in chunks:
+            texts.append(chunk)
+            metadatas.append({"parent_id": parent_id, "source": file["source"]})
+
+    vector_store.add_texts(texts=texts, metadatas=metadatas)
+    _save_parent_docs(repo_id, parent_docs)
+
+    print(f"Ingested {len(files)} files for repo_id='{repo_id}'")
 
 
 def retrieve_repository_knowledge(query: str, repo_id: str, top_k: int = 4) -> list[dict]:
     """
     THIS is the function the router (and eventually the Planner Agent)
-    calls for repo-specific questions. Same shape philosophy as
-    retrieve_engineering_knowledge() — but "content" here is a FULL
-    FILE, not a small chunk, since that's what Parent Document
-    Retriever returns.
+    calls for repo-specific questions. "content" here is a FULL FILE,
+    not a small chunk — small chunks are only used internally for search
+    accuracy, the full parent file is what gets returned.
 
     Returns a list of {"content": str, "source": str}.
     Empty list if nothing relevant found, or if this repo hasn't been
     ingested yet.
     """
-    if repo_id not in _retrievers:
-        _retrievers[repo_id] = _build_retriever(repo_id)
+    vector_store = _get_vector_store(repo_id)
+    parent_docs = _load_parent_docs(repo_id)
 
-    retriever = _retrievers[repo_id]
-    retriever.search_kwargs = {"k": top_k}
+    if not parent_docs:
+        return []
 
-    docs = retriever.invoke(query)
+    # Search more child chunks than top_k, since multiple chunks can
+    # point to the same parent file — then dedupe down to top_k files.
+    child_results = vector_store.similarity_search(query, k=top_k * 3)
+
+    seen_parent_ids = []
+    for doc in child_results:
+        parent_id = doc.metadata.get("parent_id")
+        if parent_id and parent_id not in seen_parent_ids:
+            seen_parent_ids.append(parent_id)
+        if len(seen_parent_ids) >= top_k:
+            break
+
     return [
         {
-            "content": doc.page_content,
-            "source": doc.metadata.get("source", "unknown"),
+            "content": parent_docs[pid]["content"],
+            "source": parent_docs[pid]["source"],
         }
-        for doc in docs
+        for pid in seen_parent_ids
+        if pid in parent_docs
     ]
 
 

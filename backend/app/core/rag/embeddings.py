@@ -6,8 +6,12 @@ repository_rag.py use this so the model is only loaded once and both
 RAG systems stay consistent.
 """
 
+<<<<<<< HEAD
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
+=======
+from langchain_huggingface import HuggingFaceEmbeddings
+>>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 _embeddings = None

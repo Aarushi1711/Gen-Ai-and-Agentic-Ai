@@ -10,18 +10,28 @@ a prompt with those chunks -> Gemini generates the final answer.
 """
 
 import os
+<<<<<<< HEAD
 import google.generativeai as genai
+=======
+from groq import Groq
+>>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
 
 from app.core.rag.engineering_rag import retrieve_engineering_knowledge
 from app.core.rag.repository_rag import retrieve_repository_knowledge
 from app.core.rag.web_rag import search_web
 
+<<<<<<< HEAD
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MODEL_NAME = "gemini-2.5-flash"
+=======
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+MODEL_NAME = "llama-3.3-70b-versatile"
+>>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
 
 _model = None
 
 
+<<<<<<< HEAD
 def _get_model():
     global _model
     if _model is None:
@@ -33,6 +43,41 @@ def _get_model():
             )
         genai.configure(api_key=GEMINI_API_KEY)
         _model = genai.GenerativeModel(MODEL_NAME)
+=======
+class _GroqResponse:
+    """Mimics Gemini's response.text shape so every ask_*() function
+    below stays unchanged — they all just do response.text."""
+    def __init__(self, text):
+        self.text = text
+
+
+class _GroqModel:
+    """Mimics Gemini's model.generate_content(prompt) shape for the
+    same reason — a drop-in replacement, not a rewrite."""
+    def __init__(self, client, model_name):
+        self.client = client
+        self.model_name = model_name
+
+    def generate_content(self, prompt):
+        completion = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _GroqResponse(completion.choices[0].message.content)
+
+
+def _get_model():
+    global _model
+    if _model is None:
+        if not GROQ_API_KEY:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Add it to your backend/.env file:\n"
+                "GROQ_API_KEY=your_key_here\n"
+                "Get a free key at https://console.groq.com/keys"
+            )
+        client = Groq(api_key=GROQ_API_KEY)
+        _model = _GroqModel(client, MODEL_NAME)
+>>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
     return _model
 
 
@@ -236,4 +281,60 @@ Your answer:"""
         "answer": response.text,
         "sources": list(set(sources)),
         "used_web": used_web,
+<<<<<<< HEAD
+=======
+    }
+
+
+def ask_ui_ux_review(question: str, repo_id: str | None = None, top_k: int = 4) -> dict:
+    """
+    UI/UX-focused reviewer. Pulls UI/UX design guidance from Engineering
+    RAG, and (if repo_id is given) the user's actual frontend code from
+    Repository RAG, then asks for both written feedback AND a real,
+    usable React + Tailwind code sample — not just a description.
+
+    Same pattern as ask_hybrid(), just with a UI/UX-specific prompt.
+    """
+    guideline_chunks = retrieve_engineering_knowledge(question, top_k=top_k)
+    code_chunks = retrieve_repository_knowledge(question, repo_id, top_k=top_k) if repo_id else []
+
+    context_parts = []
+    if guideline_chunks:
+        context_parts.append("UI/UX design guidelines:\n" + "\n\n".join(
+            f"[Source: {c['source']}]\n{c['content']}" for c in guideline_chunks
+        ))
+    if code_chunks:
+        context_parts.append("User's current frontend code:\n" + "\n\n".join(
+            f"[File: {c['source']}]\n{c['content']}" for c in code_chunks
+        ))
+
+    context = "\n\n---\n\n".join(context_parts) if context_parts else "No relevant guidelines or code found."
+
+    prompt = f"""You are Aaroh AI, a UI/UX reviewer for student developers.
+
+Using the guidelines and code below, give the user:
+1. Specific, actionable UI/UX feedback (what to improve and why)
+2. A real, working React + Tailwind CSS code sample they can use directly —
+   not a description of what it should look like, actual working code in a
+   code block.
+
+If their own code was provided, base your suggestions on improving THAT
+code specifically. If not, suggest a good example component for their
+described use case.
+
+Context:
+{context}
+
+User's request: {question}
+
+Your response:"""
+
+    model = _get_model()
+    response = model.generate_content(prompt)
+
+    return {
+        "answer": response.text,
+        "guideline_sources": list({c["source"] for c in guideline_chunks}),
+        "code_sources": list({c["source"] for c in code_chunks}),
+>>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
     }
