@@ -12,7 +12,7 @@ import { ENDPOINTS } from '../../config/api';
 type Mode = 'text' | 'voice' | 'github' | 'zip';
 type UploadState = 'idle' | 'saving' | 'done' | 'error';
 
-const modes: { id: Mode; icon: React.ComponentType<{size?: number; className?: string}>; label: string; description: string }[] = [
+const modes: { id: Mode; icon: React.FC<any>; label: string; description: string }[] = [
   { id: 'text', icon: FileText, label: 'Text Idea', description: 'Describe your project in plain text' },
   { id: 'voice', icon: Mic, label: 'Voice Input', description: 'Speak your project description' },
   { id: 'github', icon: Github, label: 'GitHub Repo', description: 'Paste a GitHub repository URL' },

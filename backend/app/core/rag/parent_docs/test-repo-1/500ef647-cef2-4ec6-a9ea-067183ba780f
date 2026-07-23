@@ -1,1 +1,0 @@
-{"lc": 1, "type": "constructor", "id": ["langchain", "schema", "document", "Document"], "kwargs": {"metadata": {"source": "schemas\\auth.py"}, "page_content": "from pydantic import BaseModel, EmailStr\n\nclass SignupRequest(BaseModel):\n    email: EmailStr\n    password: str\n    name: str", "type": "Document"}}

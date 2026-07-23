@@ -25,11 +25,16 @@ export const ENDPOINTS = {
     zip: `${API_BASE_URL}/upload/zip`,
     status: (jobId: string) => `${API_BASE_URL}/upload/status/${jobId}`,
   },
+  // Repo Intelligence
+  repoIntel: {
+    analyzeGithub: `${API_BASE_URL}/repo-intel/analyze`,
+    analyzeZip: `${API_BASE_URL}/repo-intel/analyze-zip`,
+  },
   // AI
   ai: {
-    chat: `${API_BASE_URL}/ai/chat`,
-    analyze: (projectId: string) => `${API_BASE_URL}/ai/analyze/${projectId}`,
-  },
+  chat: `${API_BASE_URL}/api/mentor/ask`,
+  history: (projectId: string) => `${API_BASE_URL}/api/mentor/history/${projectId}`,
+},
   // Health
   health: {
     report: (projectId: string) => `${API_BASE_URL}/health/${projectId}`,
@@ -37,13 +42,11 @@ export const ENDPOINTS = {
   },
   // Roadmap
   roadmap: {
-    get: (projectId: string) => `${API_BASE_URL}/roadmap/${projectId}`,
-    update: (projectId: string, milestoneId: string) =>
-      `${API_BASE_URL}/roadmap/${projectId}/milestones/${milestoneId}`,
+    get: (projectId: string) => `${API_BASE_URL}/roadmaps/project/${projectId}`,
   },
   // Architecture
   architecture: {
-    get: (projectId: string) => `${API_BASE_URL}/architecture/${projectId}`,
+    get: (projectId: string) => `${API_BASE_URL}/api/architecture/${projectId}`,
   },
   // Analytics
   analytics: {
@@ -58,4 +61,3 @@ export const ENDPOINTS = {
     send: `${API_BASE_URL}/contact`,
   },
 };
-

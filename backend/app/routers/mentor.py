@@ -1,23 +1,24 @@
 """
 app/routers/mentor.py
 
-Exposes the full RAG + Gemini loop over HTTP, AND saves every question
-and answer to the database — so chat history actually persists and
-the frontend's AI Mentor Chat page can load past conversations.
-
-Follows the same auth + DB pattern as project.py / repo.py:
-Depends(get_db) for the database session, Depends(get_current_user)
-for the logged-in user's identity.
+Single entry point for the AI Mentor Chat. Calls ask_planner() — NOT
+any individual RAG function directly — so every route (general, repo,
+ui_ux, architecture, report) is reachable from the frontend through
+one endpoint. Saves every question and answer to the database so
+chat history persists.
 """
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.rag.generate import ask_mentor
+from app.core.agents.planner import ask_planner
 from app.models.chat_message import ChatMessage
 from app.models.project import Project
+from app.models.repo import Repo
 from app.schemas.mentor import MentorAskRequest, MentorAskResponse
 
 router = APIRouter(prefix="/api/mentor", tags=["mentor"])
@@ -29,11 +30,18 @@ def ask(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # Confirm the project exists and belongs to this user before answering.
-    # (Mirrors the ownership check pattern in project.py's router.)
     project = db.query(Project).filter(Project.id == request.project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Resolve repo_id: use whatever the request explicitly passes, else
+    # look up the repo linked to this project.
+    repo_id = request.repo_id
+    if not repo_id:
+        repo = db.query(Repo).filter(Repo.project_id == request.project_id).first()
+        repo_id = repo.repo_identifier if repo else None
+        # ^ swap "repo_identifier" for whatever column on Repo actually
+        # holds the string used in ingest_repository()/retrieve_repository_knowledge()
 
     # 1. Save the user's question
     user_message = ChatMessage(
@@ -44,24 +52,35 @@ def ask(
     db.add(user_message)
     db.commit()
 
-    # 2. Run the actual RAG + Gemini loop
+    # 2. Run the Planner — this is the actual routing + RAG loop
     try:
-        result = ask_mentor(request.question, top_k=request.top_k)
+        result = ask_planner(request.question, repo_id=repo_id)
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # 3. Save Aaroh's answer
+    # 3. Save the answer. For architecture/report routes, `data` holds
+    # the structured graph/scores — appended as a JSON comment so it
+    # survives in chat history without changing the ChatMessage schema.
+    stored_content = result["answer"]
+    if result.get("data"):
+        stored_content += f"\n\n<!--data:{json.dumps(result['data'])}-->"
+
     assistant_message = ChatMessage(
         project_id=request.project_id,
         role="assistant",
-        content=result["answer"],
+        content=stored_content,
         sources=", ".join(result["sources"]) if result["sources"] else None,
     )
     db.add(assistant_message)
     db.commit()
     db.refresh(assistant_message)
 
-    return MentorAskResponse(answer=result["answer"], sources=result["sources"])
+    return MentorAskResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+        route_used=result["route_used"],
+        data=result.get("data"),
+    )
 
 
 @router.get("/history/{project_id}")

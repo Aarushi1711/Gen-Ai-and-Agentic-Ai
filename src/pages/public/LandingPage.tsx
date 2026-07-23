@@ -1,12 +1,18 @@
 import { Link } from 'react-router-dom';
 import {
   Zap, ArrowRight, Brain, Map, GitBranch, BarChart3,
-  MessageSquare, FileText, Upload, Shield, ChevronRight,
+  MessageSquare, FileText, Shield, ChevronRight,
   Star, Code2, Rocket, BookOpen
 } from 'lucide-react';
 import PublicLayout from '../../layouts/PublicLayout';
 
-const features = [
+const features: {
+  icon: React.FC<any>;
+  title: string;
+  description: string;
+  color: string;
+  bg: string;
+}[] = [
   {
     icon: Brain,
     title: 'AI-Powered Analysis',

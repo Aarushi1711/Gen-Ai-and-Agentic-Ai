@@ -28,7 +28,6 @@ def analyze_project(
         input_type=project.input_type,
     )
 
-    # Save the roadmap milestones
     for m in result.get("milestones") or []:
         db.add(Roadmap(
             project_id=project.id,
@@ -37,7 +36,6 @@ def analyze_project(
             order_index=m["order_index"],
         ))
 
-    # Save a report row with the AI's reasoning as commentary
     commentary = (
         f"Domain: {result.get('domain')} | Complexity: {result.get('complexity')}\n"
         f"Architecture: {result.get('architecture_pattern')} — {result.get('architecture_reasoning')}\n"

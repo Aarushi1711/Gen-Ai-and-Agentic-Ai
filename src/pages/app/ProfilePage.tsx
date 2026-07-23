@@ -1,27 +1,86 @@
-import React, { useState } from 'react';
-import { Camera, Plus, X, Check, Edit2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Camera, Plus, X, Check, Edit2, Loader, AlertCircle } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
 import { useAuth } from '../../context/AuthContext';
-import { mockUser } from '../../data/mockData';
+import { ENDPOINTS } from '../../config/api';
 
 const allSkills = ['React', 'TypeScript', 'Python', 'FastAPI', 'Node.js', 'Go', 'Rust', 'Docker', 'Kubernetes', 'PostgreSQL', 'Redis', 'LangChain', 'OpenAI', 'TensorFlow', 'PyTorch', 'AWS', 'GCP', 'Azure'];
 const roleLabels = { student: 'Student', developer: 'Developer', founder: 'Founder', researcher: 'Researcher' };
 const timelineOptions = ['1 week', '2 weeks', '1 month', '3 months', '6 months', '1 year'];
 
+interface BackendUser {
+  id: number;
+  email: string;
+  name: string | null;
+  role: string | null;
+  background: string | null;
+  skills: string | null;
+  goals: string | null;
+}
+
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { getIdToken } = useAuth();
   const [editing, setEditing] = useState(false);
-  const [profile, setProfile] = useState({ ...mockUser, name: user?.name || mockUser.name, email: user?.email || mockUser.email, role: user?.role || mockUser.role });
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(mockUser.skills);
+  const [profile, setProfile] = useState<BackendUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [newSkill, setNewSkill] = useState('');
   const [timeline, setTimeline] = useState('1 month');
   const [saved, setSaved] = useState(false);
 
-  const handleSave = () => {
-    // TODO: PUT to ENDPOINTS.auth.me
-    setEditing(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  useEffect(() => {
+    async function fetchProfile() {
+      try {
+        const token = await getIdToken();
+        const res = await fetch(ENDPOINTS.auth.me, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed to load profile');
+        const data = await res.json();
+        setProfile(data);
+        setSelectedSkills(data.skills ? JSON.parse(data.skills) : []);
+      } catch (err) {
+        setError('Could not load profile');
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchProfile();
+  }, [getIdToken]);
+
+  const handleSave = async () => {
+    if (!profile) return;
+    setSaving(true);
+    try {
+      const token = await getIdToken();
+      const payload = {
+        name: profile.name,
+        role: profile.role,
+        background: profile.background,
+        skills: JSON.stringify(selectedSkills),
+        goals: JSON.stringify({ timeline }),
+      };
+      const res = await fetch(ENDPOINTS.auth.me, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save profile');
+      const data = await res.json();
+      setProfile(data);
+      setEditing(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError('Could not save profile');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleSkill = (s: string) => {
@@ -36,9 +95,34 @@ export default function ProfilePage() {
     setNewSkill('');
   };
 
+  if (loading) {
+    return (
+      <AppLayout>
+        <div className="max-w-4xl mx-auto"><div className="card p-8 text-center text-muted flex items-center justify-center gap-2"><Loader size={20} className="animate-spin" /> Loading profile...</div></div>
+      </AppLayout>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <AppLayout>
+        <div className="max-w-4xl mx-auto space-y-6">
+          <h1 className="page-title">Profile</h1>
+          <div className="card p-8 text-center text-red-500">{error || 'Could not load profile'}</div>
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">
+            <AlertCircle size={15} />{error}
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div>
             <h1 className="page-title">Profile</h1>
@@ -49,8 +133,9 @@ export default function ProfilePage() {
               <button onClick={() => setEditing(false)} className="btn-secondary flex items-center gap-2">
                 <X size={15} />Cancel
               </button>
-              <button onClick={handleSave} className="btn-primary flex items-center gap-2">
-                <Check size={15} />Save changes
+              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2 disabled:opacity-50">
+                {saving ? <Loader size={15} className="animate-spin" /> : <Check size={15} />}
+                {saving ? 'Saving...' : 'Save changes'}
               </button>
             </div>
           ) : (
@@ -65,8 +150,8 @@ export default function ProfilePage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
             <div className="relative">
               <img
-                src={profile.avatar}
-                alt={profile.name}
+                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${profile.email}`}
+                alt={profile.name || 'User'}
                 className="w-20 h-20 rounded-full object-cover border-2 border-surface-200 dark:border-surface-700"
               />
               {editing && (
@@ -80,18 +165,14 @@ export default function ProfilePage() {
                 <div>
                   <label className="label">Full name</label>
                   {editing ? (
-                    <input className="input" value={profile.name} onChange={e => setProfile(p => ({ ...p, name: e.target.value }))} />
+                    <input className="input" value={profile.name || ''} onChange={e => setProfile(p => ({ ...p!, name: e.target.value }))} />
                   ) : (
-                    <p className="text-surface-900 dark:text-surface-100 font-medium">{profile.name}</p>
+                    <p className="text-surface-900 dark:text-surface-100 font-medium">{profile.name || 'Not set'}</p>
                   )}
                 </div>
                 <div>
                   <label className="label">Email</label>
-                  {editing ? (
-                    <input className="input" type="email" value={profile.email} onChange={e => setProfile(p => ({ ...p, email: e.target.value }))} />
-                  ) : (
-                    <p className="text-surface-900 dark:text-surface-100">{profile.email}</p>
-                  )}
+                  <p className="text-surface-900 dark:text-surface-100">{profile.email}</p>
                 </div>
               </div>
               <div>
@@ -101,7 +182,7 @@ export default function ProfilePage() {
                     {(['student', 'developer', 'founder', 'researcher'] as const).map(r => (
                       <button
                         key={r}
-                        onClick={() => setProfile(p => ({ ...p, role: r }))}
+                        onClick={() => setProfile(p => ({ ...p!, role: r }))}
                         className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
                           profile.role === r
                             ? 'border-primary-500 bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300'
@@ -113,26 +194,26 @@ export default function ProfilePage() {
                     ))}
                   </div>
                 ) : (
-                  <span className="badge bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 capitalize">{profile.role}</span>
+                  <span className="badge bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 capitalize">{profile.role || 'Not set'}</span>
                 )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Bio */}
+        {/* Bio (background) */}
         <div className="card p-6">
           <h2 className="font-semibold text-surface-900 dark:text-surface-100 mb-4">About</h2>
           {editing ? (
             <textarea
               className="input resize-none"
               rows={3}
-              value={profile.bio}
-              onChange={e => setProfile(p => ({ ...p, bio: e.target.value }))}
+              value={profile.background || ''}
+              onChange={e => setProfile(p => ({ ...p!, background: e.target.value }))}
               placeholder="Tell us about yourself..."
             />
           ) : (
-            <p className="text-surface-700 dark:text-surface-300 leading-relaxed">{profile.bio}</p>
+            <p className="text-surface-700 dark:text-surface-300 leading-relaxed">{profile.background || 'No bio yet'}</p>
           )}
         </div>
 

@@ -1,5 +1,11 @@
 """
-app/core/agent/planner.py
+app/core/agents/planner.py
+
+Master router: takes a question (+ optional repo_id), classifies intent
+via keyword matching (no LLM call needed for this step), and routes to
+the correct RAG/agent function. This is the single entry point every
+other part of the app should call — routers should never call
+ask_mentor_smart() / generate_architecture_graph() etc. directly.
 """
 
 from typing import TypedDict, Optional
@@ -16,18 +22,9 @@ class PlannerState(TypedDict):
     route: Optional[str]
     answer: Optional[str]
     sources: Optional[list]
-    data: Optional[dict]  # for structured (non-text) outputs like graphs/reports
+    data: Optional[dict]  # non-null only for architecture/report routes
 
 
-_REPO_SIGNALS = [
-    "my code", "my repo", "my project", "this file", "this function",
-    "review my", "my backend", "my auth", "bug in my", "explain this",
-    "my implementation", "my repository",
-]
-_UI_UX_SIGNALS = [
-    "ui", "ux", "design", "layout", "component", "frontend look",
-    "user interface", "user experience", "styling", "css", "tailwind",
-]
 _ARCHITECTURE_SIGNALS = [
     "architecture diagram", "show my architecture", "visualize my",
     "architecture graph", "system diagram", "how are the pieces connected",
@@ -35,6 +32,15 @@ _ARCHITECTURE_SIGNALS = [
 _REPORT_SIGNALS = [
     "health score", "health report", "how healthy is my project",
     "generate a report", "score my project", "project health",
+]
+_UI_UX_SIGNALS = [
+    "ui", "ux", "design", "layout", "component", "frontend look",
+    "user interface", "user experience", "styling", "css", "tailwind",
+]
+_REPO_SIGNALS = [
+    "my code", "my repo", "my project", "this file", "this function",
+    "review my", "my backend", "my auth", "bug in my", "explain this",
+    "my implementation", "my repository",
 ]
 
 
@@ -151,5 +157,5 @@ def ask_planner(question: str, repo_id: str = None) -> dict:
         "answer": result["answer"],
         "sources": result.get("sources", []),
         "route_used": result["route"],
-        "data": result.get("data"),  # non-null only for architecture/report routes
+        "data": result.get("data"),
     }

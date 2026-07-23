@@ -10,40 +10,18 @@ a prompt with those chunks -> Gemini generates the final answer.
 """
 
 import os
-<<<<<<< HEAD
-import google.generativeai as genai
-=======
 from groq import Groq
->>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
 
 from app.core.rag.engineering_rag import retrieve_engineering_knowledge
 from app.core.rag.repository_rag import retrieve_repository_knowledge
 from app.core.rag.web_rag import search_web
 
-<<<<<<< HEAD
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = "gemini-2.5-flash"
-=======
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 MODEL_NAME = "llama-3.3-70b-versatile"
->>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
 
 _model = None
 
 
-<<<<<<< HEAD
-def _get_model():
-    global _model
-    if _model is None:
-        if not GEMINI_API_KEY:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set. Add it to your backend/.env file:\n"
-                "GEMINI_API_KEY=your_key_here\n"
-                "Get a free key at https://aistudio.google.com/apikey"
-            )
-        genai.configure(api_key=GEMINI_API_KEY)
-        _model = genai.GenerativeModel(MODEL_NAME)
-=======
 class _GroqResponse:
     """Mimics Gemini's response.text shape so every ask_*() function
     below stays unchanged — they all just do response.text."""
@@ -77,7 +55,6 @@ def _get_model():
             )
         client = Groq(api_key=GROQ_API_KEY)
         _model = _GroqModel(client, MODEL_NAME)
->>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
     return _model
 
 
@@ -281,8 +258,6 @@ Your answer:"""
         "answer": response.text,
         "sources": list(set(sources)),
         "used_web": used_web,
-<<<<<<< HEAD
-=======
     }
 
 
@@ -336,5 +311,4 @@ Your response:"""
         "answer": response.text,
         "guideline_sources": list({c["source"] for c in guideline_chunks}),
         "code_sources": list({c["source"] for c in code_chunks}),
->>>>>>> 46d9e9c61d660e3c392a406247c8bb67566f99da
     }

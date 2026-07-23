@@ -14,3 +14,10 @@ backend/firebase-credentials.json
 
 backend/app/core/rag/chroma_db/
 backend/app/core/rag/parent_docs/
+
+
+
+echo ".venv/" >> .gitignore
+echo "venv/" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo "*.pyc" >> .gitignore

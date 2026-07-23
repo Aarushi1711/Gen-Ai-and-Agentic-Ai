@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import ReactFlow, {
   Node,
   Edge,
@@ -14,10 +14,14 @@ import ReactFlow, {
   Position,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Info, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Info, AlertCircle, Loader } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
 import { mockArchitectureNodes, mockArchitectureEdges } from '../../data/mockData';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
+import { useSelectedProject } from '../../context/SelectedProjectContext';
+import { ENDPOINTS } from '../../config/api';
+import ProjectSwitcher from '../../components/shared/ProjectSwitcher';
 
 const colorMap: Record<string, { bg: string; border: string; text: string }> = {
   blue: { bg: '#eff6ff', border: '#3b82f6', text: '#1d4ed8' },
@@ -77,14 +81,68 @@ const techStackLegend = [
 
 export default function ArchitecturePage() {
   const { theme } = useTheme();
-  const [nodes, , onNodesChange] = useNodesState(mockArchitectureNodes as Node[]);
+  const { getIdToken } = useAuth();
+  const { selectedProject, loading: projectsLoading } = useSelectedProject();
+  const [nodes, setNodes, onNodesChange] = useNodesState(mockArchitectureNodes as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState(mockArchitectureEdges as Edge[]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges(eds => addEdge({ ...params, animated: true }, eds)),
     [setEdges]
   );
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setLoading(false);
+      return;
+    }
+
+    async function fetchArchitecture() {
+      setLoading(true);
+      try {
+        const token = await getIdToken();
+        const res = await fetch(ENDPOINTS.architecture.get(String(selectedProject!.id)), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed to load architecture');
+        const data = await res.json();
+        setNodes(data.nodes || mockArchitectureNodes as Node[]);
+        setEdges(data.edges || mockArchitectureEdges as Edge[]);
+        setError(null);
+      } catch (err) {
+        setError('Could not load architecture. Using mock data instead.');
+        setNodes(mockArchitectureNodes as Node[]);
+        setEdges(mockArchitectureEdges as Edge[]);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchArchitecture();
+  }, [selectedProject, getIdToken, setNodes, setEdges]);
+
+  if (projectsLoading || loading) {
+    return (
+      <AppLayout>
+        <div className="max-w-6xl mx-auto"><div className="card p-8 text-center text-muted flex items-center justify-center gap-2"><Loader size={20} className="animate-spin" /> Loading architecture...</div></div>
+      </AppLayout>
+    );
+  }
+
+  if (!selectedProject) {
+    return (
+      <AppLayout>
+        <div className="max-w-6xl mx-auto space-y-6">
+          <h1 className="page-title">Architecture Visualization</h1>
+          <div className="card p-8 text-center text-muted">
+            You don't have any projects yet. Upload one to get started.
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -92,13 +150,21 @@ export default function ArchitecturePage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="page-title">Architecture Visualization</h1>
-            <p className="text-muted mt-1">VectorSearch Engine — Interactive architecture diagram</p>
+            <p className="text-muted mt-1">{selectedProject.title} — Interactive architecture diagram</p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted bg-primary-50 dark:bg-primary-950 border border-primary-200 dark:border-primary-800 rounded-lg px-3 py-2">
-            <Info size={13} className="text-primary-500" />
-            <span>Drag nodes to rearrange. Click for details.</span>
+          <div className="flex items-center gap-3">
+            <ProjectSwitcher />
+            <div className="flex items-center gap-2 text-xs text-muted bg-primary-50 dark:bg-primary-950 border border-primary-200 dark:border-primary-800 rounded-lg px-3 py-2">
+              <Info size={13} className="text-primary-500" />
+              <span>Drag nodes to rearrange. Click for details.</span>
+            </div>
           </div>
         </div>
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 text-sm">
+            <AlertCircle size={15} />{error}
+          </div>
+        )}
 
         {/* Legend */}
         <div className="card p-4 flex flex-wrap gap-3">

@@ -8,8 +8,8 @@ architecture + stack, suggested features, and a milestone roadmap.
 
 Single-shot generation using Engineering RAG for grounding — same
 pattern as report_generator.py. Not a multi-step LangGraph flow;
-the Planner Agent (app/core/agent/planner.py) is a separate, simpler
-router for chat questions.
+planner.py (in this same folder) is a separate, simpler router for
+chat questions.
 """
 
 import json

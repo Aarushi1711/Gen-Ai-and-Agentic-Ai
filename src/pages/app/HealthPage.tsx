@@ -3,6 +3,7 @@ import {
   Activity, TrendingUp, AlertTriangle, CheckCircle,
   ChevronDown, ChevronUp, Shield, FileText, Code2, Server, Zap, Rocket
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import AppLayout from '../../layouts/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { useSelectedProject } from '../../context/SelectedProjectContext';
@@ -34,14 +35,14 @@ interface Category {
   issues: string[];
 }
 
-const statusConfig: Record<Status, { color: string; bg: string; label: string; icon: React.ComponentType<{size?: number; className?: string}> }> = {
+const statusConfig: Record<Status, { color: string; bg: string; label: string; icon: React.FC<any> }> = {
   excellent: { color: 'text-accent-600 dark:text-accent-400', bg: 'bg-accent-50 dark:bg-accent-950', label: 'Excellent', icon: CheckCircle },
   good: { color: 'text-primary-600 dark:text-primary-400', bg: 'bg-primary-50 dark:bg-primary-950', label: 'Good', icon: TrendingUp },
   warning: { color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950', label: 'Needs attention', icon: AlertTriangle },
   critical: { color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-950', label: 'Critical', icon: AlertTriangle },
 };
 
-const categoryIcons: Record<string, React.ComponentType<{size?: number; className?: string}>> = {
+const categoryIcons: Record<string, React.FC<any>> = {
   Architecture: Server,
   Scalability: TrendingUp,
   Documentation: FileText,
@@ -270,9 +271,9 @@ export default function HealthPage() {
           </div>
           <div className="flex items-center gap-3">
             <ProjectSwitcher />
-            <a href="/report" className="btn-secondary flex items-center gap-2 text-sm">
+            <Link to="/report" className="btn-secondary flex items-center gap-2 text-sm">
               <FileText size={15} />Export Report
-            </a>
+            </Link>
           </div>
         </div>
 

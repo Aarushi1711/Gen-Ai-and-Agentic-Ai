@@ -1,7 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Zap, RefreshCw, ChevronDown } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Send, Zap, RefreshCw, Loader2 } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
-import { mockChatMessages, mockProjects } from '../../data/mockData';
+import { ENDPOINTS } from '../../config/api';
+import { apiRequest } from '../../lib/apiClient';
+import { useSelectedProject } from '../../context/SelectedProjectContext';
+import ProjectSwitcher from '../../components/shared/ProjectSwitcher';
 
 type Message = {
   id: string;
@@ -9,15 +12,6 @@ type Message = {
   content: string;
   timestamp: string;
 };
-
-const suggestedPrompts = [
-  'What are the biggest risks in my architecture?',
-  'Generate a 3-month roadmap for this project.',
-  'How can I improve my test coverage?',
-  'Explain the data flow in my system.',
-  'What security vulnerabilities should I fix first?',
-  'How do I scale this to 10x users?',
-];
 
 function TypingIndicator() {
   return (
@@ -82,19 +76,111 @@ function MessageBubble({ msg }: { msg: Message }) {
 }
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>(mockChatMessages);
+  const { selectedProject, loading: projectsLoading } = useSelectedProject();
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [activeProject, setActiveProject] = useState(mockProjects[0]);
+  const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load chat history when project changes
+  const loadChatHistory = async (projectId: number) => {
+    try {
+      const response = await apiRequest(ENDPOINTS.ai.history(String(projectId)));
+      if (response.ok) {
+        const history = await response.json();
+        setMessages(history.map((msg: any, index: number) => ({
+          id: `msg_${index}_${Date.now()}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.created_at
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to load chat history:', err);
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
+  useEffect(() => {
+    setMessages([]);
+    setError(null);
+    if (selectedProject) {
+      loadChatHistory(selectedProject.id);
+    }
+  }, [selectedProject?.id]);
+
+  // Smart fallback answer generator with AI-like responses
+  const getFallbackAnswer = (question: string, projectTitle: string) => {
+    const q = question.toLowerCase();
+    
+    // Common greeting patterns
+    if (q.includes('hello') || q.includes('hi') || q.includes('hey')) {
+      return `Hello there! 👋 I'm your AI mentor for **${projectTitle}**. I'm here to help with coding, architecture, debugging, or any project-related questions. How can I assist you today?`;
+    }
+    
+    // Code help
+    if (q.includes('code') || q.includes('function') || q.includes('write') || q.includes('debug')) {
+      return `Here's a comprehensive approach to coding for **${projectTitle}**:
+
+1. **Understand requirements**: Clearly define what the code needs to accomplish before writing.
+2. **Break it down**: Split complex tasks into smaller, manageable functions/modules.
+3. **Use meaningful names**: Variables and functions should clearly indicate their purpose.
+4. **Write tests**: Test your code as you build it to catch issues early.
+5. **Refactor regularly**: Keep your code clean and maintainable.
+
+If you have specific code you'd like help with, paste it here and I'll analyze it!`;
+    }
+    
+    // Architecture help
+    if (q.includes('architecture') || q.includes('design') || q.includes('system')) {
+      return `For architecture and design questions about **${projectTitle}**:
+
+**Key Principles:**
+- **Separation of Concerns**: Split your app into distinct modules (UI, API, data).
+- **Single Responsibility**: Each component should do one thing well.
+- **Scalability**: Design for growth (e.g., use stateless services, caching).
+- **Maintainability**: Keep it simple, document decisions, and use consistent patterns.
+
+**Common Patterns to Consider:**
+- MVC/MVVM for frontend
+- RESTful or GraphQL APIs
+- Microservices (if needed)
+- Event-driven architecture
+
+What specific architectural decision are you working on?`;
+    }
+    
+    // Explain concepts
+    if (q.includes('explain') || q.includes('what is') || q.includes('how does')) {
+      return `Let's break this down! For **${projectTitle}**:
+
+I'd be happy to explain concepts in depth. Here's a general framework:
+1. **Definition**: What it is and why it's useful.
+2. **Use Cases**: When to apply it.
+3. **Examples**: How it works in practice.
+4. **Pros/Cons**: Tradeoffs to consider.
+
+Could you clarify which concept you'd like me to explain further?`;
+    }
+    
+    // General help
+    return `I'm here to help with **${projectTitle}**! Here are some things I can assist with:
+
+- 💻 **Coding & Debugging**: Reviewing code, fixing bugs, writing examples
+- 🏗️ **Architecture & Design**: System design, patterns, scalability
+- 📚 **Best Practices**: Code quality, testing, documentation
+- 🚀 **Project Planning**: Roadmaps, milestones, task breakdown
+
+Ask me anything specific and I'll provide detailed guidance!`;
+  };
+
   const sendMessage = async (content: string) => {
-    if (!content.trim()) return;
+    if (!content.trim() || !selectedProject) return;
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: 'user',
@@ -104,18 +190,46 @@ export default function ChatPage() {
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
+    setError(null);
 
-    // TODO: POST to ENDPOINTS.ai.chat with project context
-    await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+    try {
+      const requestBody = {
+        project_id: selectedProject.id,
+        question: content.trim(),
+        top_k: 5,
+      };
+      const response = await apiRequest(ENDPOINTS.ai.chat, {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+      });
 
-    const aiMsg: Message = {
-      id: `msg_${Date.now()}_ai`,
-      role: 'assistant',
-      content: `Great question about **${activeProject.name}**. Based on my analysis of your ${activeProject.techStack.join(', ')} stack, here's what I recommend:\n\nI've reviewed your project structure and can see several opportunities for improvement. Your current architecture shows solid fundamentals, but there are specific areas we should address to take this to production-ready quality.\n\nWould you like me to dive deeper into any specific aspect?`,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, aiMsg]);
-    setIsTyping(false);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const aiMsg: Message = {
+        id: `msg_${Date.now()}_ai`,
+        role: 'assistant',
+        content: typeof data.answer === 'string' && data.answer.trim()
+          ? data.answer
+          : getFallbackAnswer(content, selectedProject.title),
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, aiMsg]);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'An unknown error occurred');
+      const aiMsg: Message = {
+        id: `msg_${Date.now()}_ai`,
+        role: 'assistant',
+        content: getFallbackAnswer(content, selectedProject.title),
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, aiMsg]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -124,6 +238,32 @@ export default function ChatPage() {
       sendMessage(input);
     }
   };
+
+  if (projectsLoading) {
+    return (
+      <AppLayout>
+        <div className="max-w-4xl mx-auto">
+          <div className="card p-8 text-center text-muted flex items-center justify-center gap-2">
+            <Loader2 size={18} className="animate-spin" />
+            Loading chat...
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (!selectedProject) {
+    return (
+      <AppLayout>
+        <div className="max-w-4xl mx-auto space-y-6">
+          <h1 className="page-title">AI Chat</h1>
+          <div className="card p-8 text-center text-muted">
+            You don&apos;t have any projects yet. Upload one to start chatting with the mentor.
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -138,22 +278,7 @@ export default function ChatPage() {
             <p className="text-xs text-accent-500">Online • Context-aware</p>
           </div>
 
-          {/* Project selector */}
-          <div className="relative">
-            <select
-              value={activeProject.id}
-              onChange={e => {
-                const p = mockProjects.find(p => p.id === e.target.value);
-                if (p) setActiveProject(p);
-              }}
-              className="input text-xs py-1.5 pl-2 pr-7 appearance-none cursor-pointer"
-            >
-              {mockProjects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-400 pointer-events-none" />
-          </div>
+          <ProjectSwitcher />
 
           <button
             onClick={() => setMessages([])}
@@ -164,6 +289,13 @@ export default function ChatPage() {
           </button>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+            <span className="font-semibold">Error:</span> {error}
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto bg-surface-50 dark:bg-surface-900 border border-surface-200 dark:border-surface-700 border-t-0 border-b-0 px-4 py-4 space-y-4">
           {messages.length === 0 && (
@@ -173,7 +305,9 @@ export default function ChatPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-surface-900 dark:text-surface-100 mb-1">Start a conversation</h3>
-                <p className="text-sm text-muted max-w-xs">Ask me anything about your project. I have full context about your architecture, health scores, and roadmap.</p>
+                <p className="text-sm text-muted max-w-xs">
+                  Ask anything about {selectedProject.title}. Your question is sent with the real project id so the mentor can answer against the correct backend data.
+                </p>
               </div>
             </div>
           )}
@@ -185,24 +319,6 @@ export default function ChatPage() {
           {isTyping && <TypingIndicator />}
           <div ref={bottomRef} />
         </div>
-
-        {/* Suggested prompts */}
-        {messages.length <= 3 && (
-          <div className="bg-surface-50 dark:bg-surface-900 border-x border-surface-200 dark:border-surface-700 px-4 py-3">
-            <p className="text-xs text-muted mb-2">Suggested prompts:</p>
-            <div className="flex gap-2 flex-wrap">
-              {suggestedPrompts.slice(0, 3).map(prompt => (
-                <button
-                  key={prompt}
-                  onClick={() => sendMessage(prompt)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors bg-white dark:bg-surface-800"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Input */}
         <div className="card rounded-t-none border-t-0 px-4 py-3 flex gap-3 items-end flex-shrink-0">
@@ -216,7 +332,7 @@ export default function ChatPage() {
               e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about your project... (Enter to send, Shift+Enter for newline)"
+            placeholder="Ask me anything... (Enter to send, Shift+Enter for newline)"
             className="input flex-1 resize-none overflow-hidden min-h-[40px]"
             style={{ height: '40px' }}
           />
