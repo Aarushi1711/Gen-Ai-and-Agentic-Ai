@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+
 from app.core.security import get_current_user
 
 router = APIRouter(tags=["Stubs - Not Yet Implemented"])
@@ -14,38 +15,14 @@ def upload_voice(current_user: dict = Depends(get_current_user)):
     return {"status": "not_implemented", "message": "Voice input pending future implementation"}
 
 
-@router.post("/upload/github")
-def upload_github(current_user: dict = Depends(get_current_user)):
-    return {"status": "not_implemented", "message": "GitHub analysis pending Member D's work"}
-
-
-@router.post("/upload/zip")
-def upload_zip(current_user: dict = Depends(get_current_user)):
-    return {"status": "not_implemented", "message": "ZIP analysis pending Member D's work"}
-
-
 @router.get("/upload/status/{job_id}")
 def upload_status(job_id: str, current_user: dict = Depends(get_current_user)):
     return {"job_id": job_id, "status": "not_implemented"}
 
 
-@router.post("/ai/chat")
-def ai_chat(current_user: dict = Depends(get_current_user)):
-    return {"status": "not_implemented", "message": "AI mentor chat pending Member C's work"}
-
-
 @router.get("/ai/analyze/{project_id}")
 def ai_analyze(project_id: int, current_user: dict = Depends(get_current_user)):
     return {"status": "not_implemented", "message": "AI analysis pending Member C's work"}
-
-
-@router.get("/architecture/{project_id}")
-def get_architecture(project_id: int, current_user: dict = Depends(get_current_user)):
-    return {"status": "not_implemented", "message": "Architecture detection pending Member D's work"}
-
-
- 
- 
 
 
 @router.get("/report/{project_id}/pdf")

@@ -34,17 +34,20 @@ def generate_report(
 
     result = generate_project_report(repo_id)
 
-    # Report model currently has 4 score fields. Saving those; the other
+    # Persist all generated report metrics in the Report table. Saving those; the other
     # 3 (code_quality, security, performance) are in `result` for the
     # frontend to use, but aren't persisted until the schema is extended.
     new_report = Report(
-        project_id=project_id,
-        architecture_score=result.get("architecture_score"),
-        scalability_score=result.get("scalability_score"),
-        documentation_score=result.get("documentation_score"),
-        deployment_readiness_score=result.get("deployment_readiness_score"),
-        ai_commentary=result.get("ai_commentary"),
-    )
+    project_id=project_id,
+    architecture_score=result.get("architecture_score"),
+    scalability_score=result.get("scalability_score"),
+    documentation_score=result.get("documentation_score"),
+    deployment_readiness_score=result.get("deployment_readiness_score"),
+    code_quality_score=result.get("code_quality_score"),
+    security_score=result.get("security_score"),
+    performance_score=result.get("performance_score"),
+    ai_commentary=result.get("ai_commentary"),
+)
     db.add(new_report)
     db.commit()
     db.refresh(new_report)

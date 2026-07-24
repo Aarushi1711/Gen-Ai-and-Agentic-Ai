@@ -7,19 +7,21 @@ import {
 } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
 import { useAuth } from '../../context/AuthContext';
+import { useSelectedProject } from '../../context/SelectedProjectContext';
 import { ENDPOINTS } from '../../config/api';
 
 type Mode = 'text' | 'voice' | 'github' | 'zip';
 type UploadState = 'idle' | 'saving' | 'done' | 'error';
 
-const modes: { id: Mode; icon: React.FC<any>; label: string; description: string }[] = [
+import { LucideIcon } from 'lucide-react';
+
+const modes: { id: Mode; icon: LucideIcon; label: string; description: string }[] = [
   { id: 'text', icon: FileText, label: 'Text Idea', description: 'Describe your project in plain text' },
   { id: 'voice', icon: Mic, label: 'Voice Input', description: 'Speak your project description' },
   { id: 'github', icon: Github, label: 'GitHub Repo', description: 'Paste a GitHub repository URL' },
   { id: 'zip', icon: Archive, label: 'ZIP Upload', description: 'Upload a compressed codebase' },
 ];
 
-// Browser speech recognition isn't in standard TS lib types — declare minimally here
 interface SpeechRecognitionResultLike {
   transcript: string;
 }
@@ -49,6 +51,9 @@ function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
 export default function UploadPage() {
   const navigate = useNavigate();
   const { getIdToken } = useAuth();
+
+  // Extract context helpers matching your SelectedProjectContext.tsx
+  const { setSelectedProjectId, refresh } = useSelectedProject();
 
   const [mode, setMode] = useState<Mode>('text');
   const [title, setTitle] = useState('');
@@ -89,13 +94,8 @@ export default function UploadPage() {
       setText(finalTranscriptRef.current + interim);
     };
 
-    recognition.onerror = () => {
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
+    recognition.onerror = () => setIsRecording(false);
+    recognition.onend = () => setIsRecording(false);
 
     recognitionRef.current = recognition;
 
@@ -133,6 +133,8 @@ export default function UploadPage() {
 
     try {
       const token = await getIdToken();
+
+      // Step 1: create the Project row
       const payload: Record<string, unknown> = {
         title: title.trim(),
         input_type: mode,
@@ -151,10 +153,63 @@ export default function UploadPage() {
       });
 
       if (!res.ok) throw new Error('Failed to save project');
+      const savedProject = await res.json();
+      const projectId = savedProject.id;
+
+      // Step 2: trigger real backend processing for this project
+      if (mode === 'github') {
+        const ingestRes = await fetch(ENDPOINTS.upload.ingestGithub, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            repo_url: githubUrl.trim(),
+            project_id: String(projectId),
+          }),
+        });
+        if (!ingestRes.ok) {
+          const errBody = await ingestRes.json().catch(() => ({}));
+          throw new Error(errBody.detail || 'Could not analyze the GitHub repository.');
+        }
+      } else if (mode === 'zip') {
+        const formData = new FormData();
+        formData.append('project_id', String(projectId));
+        formData.append('file', zipFile!);
+
+        const ingestRes = await fetch(ENDPOINTS.upload.ingestZip, {
+          method: 'POST',
+          headers: {
+            // No Content-Type here — the browser sets the multipart
+            // boundary itself. Setting it manually breaks the upload.
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        });
+        if (!ingestRes.ok) {
+          const errBody = await ingestRes.json().catch(() => ({}));
+          throw new Error(errBody.detail || 'Could not process the ZIP file.');
+        }
+      } else {
+        // text / voice — idea-based analysis, no repo to ingest
+        const analyzeRes = await fetch(ENDPOINTS.upload.analyze(String(projectId)), {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!analyzeRes.ok) {
+          const errBody = await analyzeRes.json().catch(() => ({}));
+          throw new Error(errBody.detail || 'Could not analyze your project idea.');
+        }
+      }
+
+      // Step 3: make it the active project everywhere
+      setSelectedProjectId(projectId);
+      await refresh();
 
       setUploadState('done');
-    } catch {
-      setError('Could not save your project. Please try again.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save your project. Please try again.');
       setUploadState('error');
     }
   };
@@ -184,10 +239,9 @@ export default function UploadPage() {
             <div className="w-16 h-16 rounded-full bg-accent-50 dark:bg-accent-950 flex items-center justify-center mx-auto mb-4">
               <CheckCircle size={32} className="text-accent-500" />
             </div>
-            <h2 className="text-xl font-bold text-surface-900 dark:text-surface-100 mb-2">Project saved!</h2>
+            <h2 className="text-xl font-bold text-surface-900 dark:text-surface-100 mb-2">Project saved & selected!</h2>
             <p className="text-muted mb-6">
-              Your project is now on your dashboard.
-              {(mode === 'github' || mode === 'zip') && ' AI analysis for this project is coming soon.'}
+              Your project is now active across all dashboard pages.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button onClick={() => navigate('/dashboard')} className="btn-primary">
@@ -201,11 +255,14 @@ export default function UploadPage() {
         ) : uploadState === 'saving' ? (
           <div className="card p-8 text-center">
             <Loader size={24} className="animate-spin mx-auto mb-3 text-primary-500" />
-            <p className="text-muted">Saving your project...</p>
+            <p className="text-muted">
+              {mode === 'github' || mode === 'zip'
+                ? 'Analyzing your repository — this can take a minute for larger codebases...'
+                : 'Analyzing your project idea...'}
+            </p>
           </div>
         ) : (
           <>
-            {/* Mode selector */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {modes.map(({ id, icon: Icon, label, description }) => (
                 <button
@@ -283,7 +340,6 @@ export default function UploadPage() {
                           {isRecording ? 'Listening... click to stop' : 'Click to start speaking'}
                         </p>
 
-                        {/* Live transcript, editable in case recognition mishears something */}
                         <div className="w-full">
                           <label className="label">Transcript (editable)</label>
                           <textarea
@@ -312,7 +368,7 @@ export default function UploadPage() {
                       onChange={e => setGithubUrl(e.target.value)}
                     />
                     <p className="text-xs text-muted mt-1">
-                      Saves the repo link now — automatic analysis is coming soon.
+                      Aaroh will clone and analyze this repository — public repos only for now.
                     </p>
                   </div>
                 )}
@@ -346,8 +402,9 @@ export default function UploadPage() {
                         <p className="text-xs text-muted">Max 100MB • .zip files only</p>
                       </div>
                     )}
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
-                      File name is saved now — actual file storage & analysis coming soon.
+                    <p className="text-xs text-muted mt-3">
+                      Your ZIP is analyzed on upload — architecture, code quality, and roadmap generation
+                      happen automatically once processing completes.
                     </p>
                   </div>
                 )}

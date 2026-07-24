@@ -1,8 +1,12 @@
+import json
 import re
+from collections import Counter
+from datetime import datetime
+
 import requests
-from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.project import Project
@@ -40,34 +44,6 @@ def fetch_github_data(owner: str, repo: str):
     return result
 
 
-def _count_repo_stats(repo_path: str) -> dict:
-    """Counts lines of code and files in a locally cloned repo, if one exists.
-    Safe no-op if the path doesn't exist or Repo has no local_path yet."""
-    try:
-        from app.core.rag.repository_rag import CODE_EXTENSIONS, EXCLUDED_DIRS
-    except ImportError:
-        return {"lines_of_code": 0, "files": 0}
-
-    root = Path(repo_path)
-    if not root.exists():
-        return {"lines_of_code": 0, "files": 0}
-
-    total_lines = 0
-    total_files = 0
-    for file_path in root.rglob("*"):
-        if not file_path.is_file() or file_path.suffix not in CODE_EXTENSIONS:
-            continue
-        if any(part in EXCLUDED_DIRS for part in file_path.parts):
-            continue
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, PermissionError):
-            continue
-        total_lines += len(content.splitlines())
-        total_files += 1
-    return {"lines_of_code": total_lines, "files": total_files}
-
-
 @router.get("/{project_id}")
 def get_analytics(
     project_id: int,
@@ -78,10 +54,8 @@ def get_analytics(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Local code stats — safe no-op until Repo.local_path exists / a clone has happened
     repo_row = db.query(Repo).filter(Repo.project_id == project_id).first()
-    local_path = getattr(repo_row, "local_path", None) if repo_row else None
-    code_stats = _count_repo_stats(local_path) if local_path else {"lines_of_code": 0, "files": 0}
+    intel = json.loads(repo_row.full_analysis) if (repo_row and repo_row.full_analysis) else None
 
     reports = (
         db.query(Report)
@@ -128,6 +102,7 @@ def get_analytics(
     open_issues = None
 
     if project.github_url:
+        # Accurate path: real byte-count percentages straight from GitHub.
         owner, repo = parse_github_url(project.github_url)
         if owner and repo:
             gh_data = fetch_github_data(owner, repo)
@@ -139,13 +114,37 @@ def get_analytics(
                 ]
             open_issues = gh_data["open_issues"]
 
-            from collections import Counter
-            from datetime import datetime
             week_counts = Counter()
             for date_str in gh_data["recent_commits"]:
                 dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 week_counts[dt.strftime("%b %d")] += 1
             commit_activity = [{"week": k, "commits": v} for k, v in week_counts.items()]
+
+    elif intel:
+        # ZIP uploads (or GitHub repos with no languages data): fall back to
+        # what Repository Intelligence detected. We don't have byte counts
+        # for a ZIP the way GitHub's API gives us for a repo, so this is an
+        # equal-weighted approximation across detected languages — not as
+        # precise as the GitHub path above, but real detected data instead
+        # of an empty chart.
+        languages = [t["name"] for t in intel.get("tech_stack", []) if t.get("category") == "language"]
+        if not languages:
+            # No language-category entries detected — fall back to every
+            # detected technology so the chart isn't empty for a project
+            # that's just, say, a pure-frontend repo with no backend language.
+            languages = [t["name"] for t in intel.get("tech_stack", [])]
+        if languages:
+            share = round(100 / len(languages), 1)
+            tech_stack_breakdown = [{"name": lang, "value": share} for lang in languages]
+        # No GitHub API available for a ZIP upload, so commit history and
+        # open issue counts genuinely don't exist here — left empty rather
+        # than faked.
+
+    # Code quality numbers straight from the AST analysis (works for both
+    # GitHub and ZIP uploads now that Repository Intelligence runs on
+    # ingestion). Replaces the old lines_of_code/files fields, which were
+    # dead code — Repo.local_path was never a real column.
+    code_quality = intel.get("code_quality") if intel else None
 
     return {
         "health_score_trend": health_score_trend,
@@ -154,6 +153,8 @@ def get_analytics(
         "commit_activity": commit_activity,
         "open_issues": open_issues,
         "has_github_data": bool(project.github_url),
-        "lines_of_code": code_stats["lines_of_code"],
-        "files": code_stats["files"],
+        "python_files_analyzed": code_quality.get("python_files_analyzed") if code_quality else None,
+        "total_functions": code_quality.get("total_functions") if code_quality else None,
+        "total_classes": code_quality.get("total_classes") if code_quality else None,
+        "avg_docstring_coverage_pct": code_quality.get("avg_docstring_coverage_pct") if code_quality else None,
     }

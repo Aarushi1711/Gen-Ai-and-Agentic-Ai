@@ -17,24 +17,22 @@ export const ENDPOINTS = {
     update: (id: string) => `${API_BASE_URL}/projects/${id}`,
     delete: (id: string) => `${API_BASE_URL}/projects/${id}`,
   },
-  // Upload
+  // Upload / Ingestion
   upload: {
-    text: `${API_BASE_URL}/upload/text`,
-    voice: `${API_BASE_URL}/upload/voice`,
-    github: `${API_BASE_URL}/upload/github`,
-    zip: `${API_BASE_URL}/upload/zip`,
-    status: (jobId: string) => `${API_BASE_URL}/upload/status/${jobId}`,
+    ingestGithub: `${API_BASE_URL}/api/projects/ingest-github`,
+    ingestZip: `${API_BASE_URL}/api/projects/ingest-zip`,
+    analyze: (projectId: string) => `${API_BASE_URL}/agents/analyze/${projectId}`,
   },
-  // Repo Intelligence
+  // Repo Intelligence — analysis runs automatically during upload/ingest;
+  // this just reads back what was already computed and stored.
   repoIntel: {
-    analyzeGithub: `${API_BASE_URL}/repo-intel/analyze`,
-    analyzeZip: `${API_BASE_URL}/repo-intel/analyze-zip`,
+    get: (projectId: string) => `${API_BASE_URL}/api/projects/${projectId}/repo-intel`,
   },
   // AI
   ai: {
-  chat: `${API_BASE_URL}/api/mentor/ask`,
-  history: (projectId: string) => `${API_BASE_URL}/api/mentor/history/${projectId}`,
-},
+    chat: `${API_BASE_URL}/api/mentor/ask`,
+    history: (projectId: string) => `${API_BASE_URL}/api/mentor/history/${projectId}`,
+  },
   // Health
   health: {
     report: (projectId: string) => `${API_BASE_URL}/health/${projectId}`,

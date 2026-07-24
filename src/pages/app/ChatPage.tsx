@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Zap, RefreshCw, Loader2 } from 'lucide-react';
+import { Send, Zap, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
 import { ENDPOINTS } from '../../config/api';
 import { apiRequest } from '../../lib/apiClient';
@@ -11,7 +11,14 @@ type Message = {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  failed?: boolean;
 };
+
+interface ChatHistoryItem {
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
 
 function TypingIndicator() {
   return (
@@ -49,8 +56,14 @@ function MessageBubble({ msg }: { msg: Message }) {
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}>
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-600 to-accent-500 flex items-center justify-center flex-shrink-0 mt-1">
-          <Zap size={14} className="text-white" />
+        <div
+          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${
+            msg.failed
+              ? 'bg-red-100 dark:bg-red-950'
+              : 'bg-gradient-to-br from-primary-600 to-accent-500'
+          }`}
+        >
+          {msg.failed ? <AlertCircle size={14} className="text-red-500" /> : <Zap size={14} className="text-white" />}
         </div>
       )}
       <div className={`max-w-[75%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
@@ -58,6 +71,8 @@ function MessageBubble({ msg }: { msg: Message }) {
           className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
             isUser
               ? 'bg-primary-600 text-white rounded-tr-sm'
+              : msg.failed
+              ? 'bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-tl-sm'
               : 'bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-800 dark:text-surface-200 rounded-tl-sm'
           }`}
         >
@@ -84,18 +99,20 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load chat history when project changes
   const loadChatHistory = async (projectId: number) => {
     try {
       const response = await apiRequest(ENDPOINTS.ai.history(String(projectId)));
       if (response.ok) {
-        const history = await response.json();
-        setMessages(history.map((msg: any, index: number) => ({
-          id: `msg_${index}_${Date.now()}`,
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.created_at
-        })));
+        const history: ChatHistoryItem[] = await response.json();
+        const now = Date.now();
+        setMessages(
+          history.map((msg, index) => ({
+            id: `msg_${index}_${now}`,
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.created_at || new Date().toISOString(),
+          }))
+        );
       }
     } catch (err) {
       console.error('Failed to load chat history:', err);
@@ -114,75 +131,11 @@ export default function ChatPage() {
     }
   }, [selectedProject?.id]);
 
-  // Smart fallback answer generator with AI-like responses
-  const getFallbackAnswer = (question: string, projectTitle: string) => {
-    const q = question.toLowerCase();
-    
-    // Common greeting patterns
-    if (q.includes('hello') || q.includes('hi') || q.includes('hey')) {
-      return `Hello there! 👋 I'm your AI mentor for **${projectTitle}**. I'm here to help with coding, architecture, debugging, or any project-related questions. How can I assist you today?`;
-    }
-    
-    // Code help
-    if (q.includes('code') || q.includes('function') || q.includes('write') || q.includes('debug')) {
-      return `Here's a comprehensive approach to coding for **${projectTitle}**:
-
-1. **Understand requirements**: Clearly define what the code needs to accomplish before writing.
-2. **Break it down**: Split complex tasks into smaller, manageable functions/modules.
-3. **Use meaningful names**: Variables and functions should clearly indicate their purpose.
-4. **Write tests**: Test your code as you build it to catch issues early.
-5. **Refactor regularly**: Keep your code clean and maintainable.
-
-If you have specific code you'd like help with, paste it here and I'll analyze it!`;
-    }
-    
-    // Architecture help
-    if (q.includes('architecture') || q.includes('design') || q.includes('system')) {
-      return `For architecture and design questions about **${projectTitle}**:
-
-**Key Principles:**
-- **Separation of Concerns**: Split your app into distinct modules (UI, API, data).
-- **Single Responsibility**: Each component should do one thing well.
-- **Scalability**: Design for growth (e.g., use stateless services, caching).
-- **Maintainability**: Keep it simple, document decisions, and use consistent patterns.
-
-**Common Patterns to Consider:**
-- MVC/MVVM for frontend
-- RESTful or GraphQL APIs
-- Microservices (if needed)
-- Event-driven architecture
-
-What specific architectural decision are you working on?`;
-    }
-    
-    // Explain concepts
-    if (q.includes('explain') || q.includes('what is') || q.includes('how does')) {
-      return `Let's break this down! For **${projectTitle}**:
-
-I'd be happy to explain concepts in depth. Here's a general framework:
-1. **Definition**: What it is and why it's useful.
-2. **Use Cases**: When to apply it.
-3. **Examples**: How it works in practice.
-4. **Pros/Cons**: Tradeoffs to consider.
-
-Could you clarify which concept you'd like me to explain further?`;
-    }
-    
-    // General help
-    return `I'm here to help with **${projectTitle}**! Here are some things I can assist with:
-
-- 💻 **Coding & Debugging**: Reviewing code, fixing bugs, writing examples
-- 🏗️ **Architecture & Design**: System design, patterns, scalability
-- 📚 **Best Practices**: Code quality, testing, documentation
-- 🚀 **Project Planning**: Roadmaps, milestones, task breakdown
-
-Ask me anything specific and I'll provide detailed guidance!`;
-  };
-
   const sendMessage = async (content: string) => {
     if (!content.trim() || !selectedProject) return;
+    const now = Date.now();
     const userMsg: Message = {
-      id: `msg_${Date.now()}`,
+      id: `msg_${now}`,
       role: 'user',
       content: content.trim(),
       timestamp: new Date().toISOString(),
@@ -209,24 +162,31 @@ Ask me anything specific and I'll provide detailed guidance!`;
       }
 
       const data = await response.json();
+
+      if (typeof data.answer !== 'string' || !data.answer.trim()) {
+        throw new Error('Aaroh returned an empty response.');
+      }
+
       const aiMsg: Message = {
         id: `msg_${Date.now()}_ai`,
         role: 'assistant',
-        content: typeof data.answer === 'string' && data.answer.trim()
-          ? data.answer
-          : getFallbackAnswer(content, selectedProject.title),
+        content: data.answer,
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, aiMsg]);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'An unknown error occurred');
-      const aiMsg: Message = {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'An unknown error occurred';
+      setError(errMsg);
+      // Show a real, visibly-failed bubble instead of a fabricated answer —
+      // the user should always be able to tell a real response from a failure.
+      const failedMsg: Message = {
         id: `msg_${Date.now()}_ai`,
         role: 'assistant',
-        content: getFallbackAnswer(content, selectedProject.title),
+        content: "Couldn't reach Aaroh AI for an answer. Please try again.",
         timestamp: new Date().toISOString(),
+        failed: true,
       };
-      setMessages(prev => [...prev, aiMsg]);
+      setMessages(prev => [...prev, failedMsg]);
     } finally {
       setIsTyping(false);
     }
@@ -258,7 +218,7 @@ Ask me anything specific and I'll provide detailed guidance!`;
         <div className="max-w-4xl mx-auto space-y-6">
           <h1 className="page-title">AI Chat</h1>
           <div className="card p-8 text-center text-muted">
-            You don&apos;t have any projects yet. Upload one to start chatting with the mentor.
+            You don't have any projects yet. Upload one to start chatting with the mentor.
           </div>
         </div>
       </AppLayout>
@@ -306,7 +266,7 @@ Ask me anything specific and I'll provide detailed guidance!`;
               <div>
                 <h3 className="font-semibold text-surface-900 dark:text-surface-100 mb-1">Start a conversation</h3>
                 <p className="text-sm text-muted max-w-xs">
-                  Ask anything about {selectedProject.title}. Your question is sent with the real project id so the mentor can answer against the correct backend data.
+                  Ask anything about {selectedProject.title}.
                 </p>
               </div>
             </div>

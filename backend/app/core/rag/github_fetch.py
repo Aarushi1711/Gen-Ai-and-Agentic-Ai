@@ -22,6 +22,26 @@ import zipfile
 import requests
 
 
+def _safe_extract(zip_ref: zipfile.ZipFile, extract_to: str) -> None:
+    """
+    Extracts a ZIP while blocking "zip slip" path traversal — a
+    malicious archive can otherwise contain entries like
+    "../../../etc/something" that resolve outside extract_to when
+    naively passed to ZipFile.extractall(). Every member's resolved
+    path is checked to still be inside extract_to before writing it;
+    anything that isn't is rejected and the whole extraction fails
+    loudly rather than silently writing outside the temp folder.
+    """
+    extract_to_real = os.path.realpath(extract_to)
+
+    for member in zip_ref.infolist():
+        member_path = os.path.realpath(os.path.join(extract_to, member.filename))
+        if not (member_path == extract_to_real or member_path.startswith(extract_to_real + os.sep)):
+            raise ValueError(f"Unsafe path in ZIP archive, refusing to extract: {member.filename}")
+
+    zip_ref.extractall(extract_to)
+
+
 def download_github_repo(repo_url: str, branch: str = None) -> str:
     """
     repo_url: e.g. "https://github.com/owner/repo"
@@ -53,7 +73,7 @@ def download_github_repo(repo_url: str, branch: str = None) -> str:
         f.write(response.content)
 
     with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(temp_dir)
+        _safe_extract(z, temp_dir)
     os.remove(zip_path)
 
     # GitHub zips extract into a single subfolder like "repo-main" — find it
@@ -82,7 +102,7 @@ def extract_uploaded_zip(zip_file_path: str) -> str:
     temp_dir = tempfile.mkdtemp(prefix="aaroh_zip_")
 
     with zipfile.ZipFile(zip_file_path, "r") as z:
-        z.extractall(temp_dir)
+        _safe_extract(z, temp_dir)
 
     # If the zip contains one single top-level folder, use that as the
     # root (matches GitHub's zip export behavior). Otherwise use temp_dir

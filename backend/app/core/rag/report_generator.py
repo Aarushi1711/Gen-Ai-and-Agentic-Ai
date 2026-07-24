@@ -16,8 +16,7 @@ import re
 from app.core.rag.generate import _get_model
 from app.core.rag.repository_rag import retrieve_repository_knowledge
 
-# NOTE: your Report model currently has 4 score fields (architecture,
-# scalability, documentation, deployment_readiness). Your frontend's
+# Your frontend's
 # Project Health page shows 6 categories (also code_quality, security,
 # performance). Flag this mismatch to Aarushi — either add 2 columns,
 # or trim the frontend to match. This generator produces all 6; drop

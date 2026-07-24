@@ -14,15 +14,20 @@ import ReactFlow, {
   Position,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Info, AlertCircle, Loader } from 'lucide-react';
+import { Info, AlertCircle, Loader, Network } from 'lucide-react';
 import AppLayout from '../../layouts/AppLayout';
-import { mockArchitectureNodes, mockArchitectureEdges } from '../../data/mockData';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSelectedProject } from '../../context/SelectedProjectContext';
 import { ENDPOINTS } from '../../config/api';
 import ProjectSwitcher from '../../components/shared/ProjectSwitcher';
 
+// -----------------------------------------------------------------------
+// Colors are keyed by an internal palette name, not by backend category.
+// The backend (architecture_agent.py) returns a `category` string like
+// "API Layer" or "AI/ML" — CATEGORY_COLOR below is what maps that to a
+// palette entry. Keep this in sync with CATEGORIES in architecture_agent.py.
+// -----------------------------------------------------------------------
 const colorMap: Record<string, { bg: string; border: string; text: string }> = {
   blue: { bg: '#eff6ff', border: '#3b82f6', text: '#1d4ed8' },
   teal: { bg: '#f0fdfa', border: '#14b8a6', text: '#0f766e' },
@@ -30,6 +35,7 @@ const colorMap: Record<string, { bg: string; border: string; text: string }> = {
   orange: { bg: '#fff7ed', border: '#f97316', text: '#c2410c' },
   purple: { bg: '#faf5ff', border: '#a855f7', text: '#7e22ce' },
   red: { bg: '#fef2f2', border: '#ef4444', text: '#b91c1c' },
+  indigo: { bg: '#eef2ff', border: '#6366f1', text: '#4338ca' },
   gray: { bg: '#f8fafc', border: '#94a3b8', text: '#475569' },
 };
 
@@ -40,8 +46,77 @@ const darkColorMap: Record<string, { bg: string; border: string; text: string }>
   orange: { bg: '#431407', border: '#f97316', text: '#fdba74' },
   purple: { bg: '#3b0764', border: '#a855f7', text: '#d8b4fe' },
   red: { bg: '#450a0a', border: '#ef4444', text: '#fca5a5' },
+  indigo: { bg: '#1e1b4b', border: '#6366f1', text: '#a5b4fc' },
   gray: { bg: '#1e293b', border: '#64748b', text: '#94a3b8' },
 };
+
+// Maps backend CATEGORIES (app/core/agents/architecture_agent.py) -> palette key.
+const CATEGORY_COLOR: Record<string, string> = {
+  'Frontend': 'blue',
+  'API Layer': 'teal',
+  'AI/ML': 'green',
+  'Data Pipeline': 'purple',
+  'Auth': 'orange',
+  'Cache': 'red',
+  'Database': 'indigo',
+  'External': 'gray',
+};
+
+const techStackLegend = Object.entries(CATEGORY_COLOR).map(([label, color]) => ({ color, label }));
+
+interface RawGraphNode {
+  id: string;
+  label: string;
+  category: string;
+  detail?: string;
+}
+
+interface RawGraphEdge {
+  source: string;
+  target: string;
+  label?: string;
+}
+
+interface RawGraph {
+  nodes: RawGraphNode[];
+  edges: RawGraphEdge[];
+}
+
+// Simple deterministic layout: one column per category (in CATEGORY_COLOR
+// order), stacked vertically within a column. Good enough since the backend
+// doesn't return positions — replace with an auto-layout lib (e.g. dagre)
+// if graphs get large or edges start overlapping heavily.
+function layoutGraph(raw: RawGraph): { nodes: Node[]; edges: Edge[] } {
+  const columnOrder = Object.keys(CATEGORY_COLOR);
+  const columnCounts: Record<number, number> = {};
+
+  const nodes: Node[] = raw.nodes.map((n) => {
+    const col = columnOrder.includes(n.category) ? columnOrder.indexOf(n.category) : columnOrder.length;
+    const row = columnCounts[col] ?? 0;
+    columnCounts[col] = row + 1;
+
+    return {
+      id: n.id,
+      type: 'default',
+      position: { x: col * 220, y: row * 130 },
+      data: {
+        label: n.label,
+        sublabel: n.detail || n.category,
+        color: CATEGORY_COLOR[n.category] || 'gray',
+      },
+    };
+  });
+
+  const edges: Edge[] = raw.edges.map((e, i) => ({
+    id: `e-${e.source}-${e.target}-${i}`,
+    source: e.source,
+    target: e.target,
+    label: e.label,
+    animated: true,
+  }));
+
+  return { nodes, edges };
+}
 
 function CustomNode({ data }: { data: { label: string; sublabel: string; color: string } }) {
   const { theme } = useTheme();
@@ -69,22 +144,12 @@ function CustomNode({ data }: { data: { label: string; sublabel: string; color: 
 
 const nodeTypes = { default: CustomNode, input: CustomNode, output: CustomNode };
 
-const techStackLegend = [
-  { color: 'blue', label: 'Frontend' },
-  { color: 'teal', label: 'API Layer' },
-  { color: 'green', label: 'AI/ML' },
-  { color: 'purple', label: 'Data Pipeline' },
-  { color: 'orange', label: 'Auth' },
-  { color: 'red', label: 'Cache' },
-  { color: 'gray', label: 'External' },
-];
-
 export default function ArchitecturePage() {
   const { theme } = useTheme();
   const { getIdToken } = useAuth();
   const { selectedProject, loading: projectsLoading } = useSelectedProject();
-  const [nodes, setNodes, onNodesChange] = useNodesState(mockArchitectureNodes as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(mockArchitectureEdges as Edge[]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node[]>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge[]>([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -102,20 +167,24 @@ export default function ArchitecturePage() {
 
     async function fetchArchitecture() {
       setLoading(true);
+      setError(null);
       try {
         const token = await getIdToken();
         const res = await fetch(ENDPOINTS.architecture.get(String(selectedProject!.id)), {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error('Failed to load architecture');
-        const data = await res.json();
-        setNodes(data.nodes || mockArchitectureNodes as Node[]);
-        setEdges(data.edges || mockArchitectureEdges as Edge[]);
-        setError(null);
+        const data: RawGraph = await res.json();
+        const { nodes: laidOutNodes, edges: laidOutEdges } = layoutGraph({
+          nodes: data.nodes || [],
+          edges: data.edges || [],
+        });
+        setNodes(laidOutNodes);
+        setEdges(laidOutEdges);
       } catch (err) {
-        setError('Could not load architecture. Using mock data instead.');
-        setNodes(mockArchitectureNodes as Node[]);
-        setEdges(mockArchitectureEdges as Edge[]);
+        setError('Could not load architecture for this project.');
+        setNodes([]);
+        setEdges([]);
       } finally {
         setLoading(false);
       }
@@ -144,6 +213,8 @@ export default function ArchitecturePage() {
     );
   }
 
+  const hasGraph = nodes.length > 0;
+
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto space-y-4 animate-fade-in">
@@ -154,105 +225,120 @@ export default function ArchitecturePage() {
           </div>
           <div className="flex items-center gap-3">
             <ProjectSwitcher />
-            <div className="flex items-center gap-2 text-xs text-muted bg-primary-50 dark:bg-primary-950 border border-primary-200 dark:border-primary-800 rounded-lg px-3 py-2">
-              <Info size={13} className="text-primary-500" />
-              <span>Drag nodes to rearrange. Click for details.</span>
-            </div>
+            {hasGraph && (
+              <div className="flex items-center gap-2 text-xs text-muted bg-primary-50 dark:bg-primary-950 border border-primary-200 dark:border-primary-800 rounded-lg px-3 py-2">
+                <Info size={13} className="text-primary-500" />
+                <span>Drag nodes to rearrange. Click for details.</span>
+              </div>
+            )}
           </div>
         </div>
+
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 text-sm">
             <AlertCircle size={15} />{error}
           </div>
         )}
 
-        {/* Legend */}
-        <div className="card p-4 flex flex-wrap gap-3">
-          {techStackLegend.map(({ color, label }) => {
-            const palette = theme === 'dark' ? darkColorMap : colorMap;
-            const c = palette[color];
-            return (
-              <div key={label} className="flex items-center gap-1.5 text-xs">
-                <div className="w-3 h-3 rounded" style={{ background: c.border }} />
-                <span className="text-surface-600 dark:text-surface-400">{label}</span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* React Flow canvas */}
-        <div className="card overflow-hidden" style={{ height: '560px' }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNode(node)}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            defaultEdgeOptions={{
-              style: { stroke: theme === 'dark' ? '#64748b' : '#94a3b8', strokeWidth: 1.5 },
-              labelStyle: { fontSize: 11, fill: theme === 'dark' ? '#94a3b8' : '#64748b' },
-              labelBgStyle: { fill: theme === 'dark' ? '#1e293b' : '#fff', fillOpacity: 0.8 },
-            }}
-          >
-            <Controls
-              style={{
-                background: theme === 'dark' ? '#1e293b' : '#fff',
-                border: theme === 'dark' ? '1px solid #334155' : '1px solid #e2e8f0',
-              }}
-            />
-            <MiniMap
-              style={{
-                background: theme === 'dark' ? '#0f172a' : '#f8fafc',
-                border: theme === 'dark' ? '1px solid #334155' : '1px solid #e2e8f0',
-              }}
-              nodeColor={(node) => {
-                const color = (node.data as { color?: string }).color;
-                const c = colorMap[color || 'blue'];
-                return c?.border || '#3b82f6';
-              }}
-            />
-            <Background
-              variant={BackgroundVariant.Dots}
-              gap={20}
-              size={1}
-              color={theme === 'dark' ? '#334155' : '#e2e8f0'}
-            />
-          </ReactFlow>
-        </div>
-
-        {/* Node detail panel */}
-        {selectedNode && (
-          <div className="card p-5 border-l-4 border-l-primary-500 animate-slide-up">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-semibold text-surface-900 dark:text-surface-100">{selectedNode.data.label}</h3>
-                <p className="text-sm text-muted">{selectedNode.data.sublabel}</p>
-              </div>
-              <button onClick={() => setSelectedNode(null)} className="text-xs text-muted hover:text-surface-700 dark:hover:text-surface-300">
-                Dismiss
-              </button>
-            </div>
-            <div className="mt-3 grid sm:grid-cols-3 gap-3">
-              <div className="text-sm">
-                <span className="text-muted">Node ID:</span>{' '}
-                <span className="font-mono text-primary-600 dark:text-primary-400">{selectedNode.id}</span>
-              </div>
-              <div className="text-sm">
-                <span className="text-muted">Type:</span>{' '}
-                <span className="font-medium text-surface-700 dark:text-surface-300 capitalize">{selectedNode.type}</span>
-              </div>
-              <div className="text-sm">
-                <span className="text-muted">Connections:</span>{' '}
-                <span className="font-medium text-surface-700 dark:text-surface-300">
-                  {edges.filter(e => e.source === selectedNode.id || e.target === selectedNode.id).length} edges
-                </span>
-              </div>
-            </div>
+        {!error && !hasGraph && (
+          <div className="card p-10 text-center text-muted flex flex-col items-center gap-2">
+            <Network size={28} className="opacity-50" />
+            <p>No architecture diagram is available yet for this project.</p>
+            <p className="text-xs">Make sure the repository has been ingested — the diagram is generated from it automatically.</p>
           </div>
+        )}
+
+        {hasGraph && (
+          <>
+            {/* Legend */}
+            <div className="card p-4 flex flex-wrap gap-3">
+              {techStackLegend.map(({ color, label }) => {
+                const palette = theme === 'dark' ? darkColorMap : colorMap;
+                const c = palette[color];
+                return (
+                  <div key={label} className="flex items-center gap-1.5 text-xs">
+                    <div className="w-3 h-3 rounded" style={{ background: c.border }} />
+                    <span className="text-surface-600 dark:text-surface-400">{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* React Flow canvas */}
+            <div className="card overflow-hidden" style={{ height: '560px' }}>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={(_, node) => setSelectedNode(node)}
+                nodeTypes={nodeTypes}
+                fitView
+                fitViewOptions={{ padding: 0.2 }}
+                defaultEdgeOptions={{
+                  style: { stroke: theme === 'dark' ? '#64748b' : '#94a3b8', strokeWidth: 1.5 },
+                  labelStyle: { fontSize: 11, fill: theme === 'dark' ? '#94a3b8' : '#64748b' },
+                  labelBgStyle: { fill: theme === 'dark' ? '#1e293b' : '#fff', fillOpacity: 0.8 },
+                }}
+              >
+                <Controls
+                  style={{
+                    background: theme === 'dark' ? '#1e293b' : '#fff',
+                    border: theme === 'dark' ? '1px solid #334155' : '1px solid #e2e8f0',
+                  }}
+                />
+                <MiniMap
+                  style={{
+                    background: theme === 'dark' ? '#0f172a' : '#f8fafc',
+                    border: theme === 'dark' ? '1px solid #334155' : '1px solid #e2e8f0',
+                  }}
+                  nodeColor={(node) => {
+                    const color = (node.data as { color?: string }).color;
+                    const c = colorMap[color || 'blue'];
+                    return c?.border || '#3b82f6';
+                  }}
+                />
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={20}
+                  size={1}
+                  color={theme === 'dark' ? '#334155' : '#e2e8f0'}
+                />
+              </ReactFlow>
+            </div>
+
+            {/* Node detail panel */}
+            {selectedNode && (
+              <div className="card p-5 border-l-4 border-l-primary-500 animate-slide-up">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold text-surface-900 dark:text-surface-100">{selectedNode.data.label}</h3>
+                    <p className="text-sm text-muted">{selectedNode.data.sublabel}</p>
+                  </div>
+                  <button onClick={() => setSelectedNode(null)} className="text-xs text-muted hover:text-surface-700 dark:hover:text-surface-300">
+                    Dismiss
+                  </button>
+                </div>
+                <div className="mt-3 grid sm:grid-cols-3 gap-3">
+                  <div className="text-sm">
+                    <span className="text-muted">Node ID:</span>{' '}
+                    <span className="font-mono text-primary-600 dark:text-primary-400">{selectedNode.id}</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="text-muted">Type:</span>{' '}
+                    <span className="font-medium text-surface-700 dark:text-surface-300 capitalize">{selectedNode.type}</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="text-muted">Connections:</span>{' '}
+                    <span className="font-medium text-surface-700 dark:text-surface-300">
+                      {edges.filter(e => e.source === selectedNode.id || e.target === selectedNode.id).length} edges
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </AppLayout>
