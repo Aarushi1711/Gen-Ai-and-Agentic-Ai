@@ -7,7 +7,7 @@ from app.models import user, project, repo, report, roadmap, chat_message
 from app.routers import architecture, analytics, project_analysis
 #from app.routers import pdf_report
 from app.routers import repo_intel_analysis
-from app.core.rag.engineering_rag import ingest_knowledge_base
+ 
 
 from app.routers import (
     project as project_router,
@@ -36,9 +36,7 @@ app.add_middleware(
 )
 
 Base.metadata.create_all(bind=engine)
-@app.on_event("startup")
-def startup_event():
-    ingest_knowledge_base()
+ 
 
 app.include_router(project_router.router)
 app.include_router(auth_router.router)
