@@ -6,16 +6,22 @@ like "explain this auth module" or "review my backend" can be answered
 with real context from THEIR code.
 
 Same Parent Document Retriever IDEA as before (search small chunks for
-accuracy, return the full file for context) — but implemented directly
-instead of using LangChain's ParentDocumentRetriever class. That class
-depends on langchain-classic's internal serialization, which kept
-breaking across package version mismatches. This version stores parent
-files as plain JSON on disk — no LangChain internals involved, so it
-can't break the same way again.
+accuracy, return the full file for context). Now uses an in-memory
+TF-IDF vector store instead of ChromaDB + sentence-transformers (see
+vector_store.py for why -- the neural embedding model was very likely
+crashing the Render deployment by using too much RAM). Parent files
+are still stored as plain JSON on disk, same as before -- that part
+was never the problem.
 
-Each repo gets its own isolated index (separate ChromaDB collection +
-separate parent-doc JSON file), keyed by repo_id, so multiple projects
-never mix results together.
+Each repo gets its own isolated in-memory index + its own parent-doc
+JSON file, keyed by repo_id, so multiple projects never mix results
+together.
+
+Note on restarts: the in-memory index for a repo is lost if the
+backend process restarts (e.g. a Render redeploy). The parent-doc JSON
+survives, but retrieve_repository_knowledge() needs the repo to be
+re-ingested (re-uploaded / re-analyzed) after a restart before it can
+find anything again.
 
 Two entry points:
 - ingest_repository(repo_path, repo_id)   -> run once per uploaded repo
@@ -29,12 +35,10 @@ import uuid
 from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
 
-from app.core.rag.embeddings import get_embeddings
+from app.core.rag.vector_store import TfidfVectorStore
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-CHROMA_BASE_DIR = os.path.join(_THIS_DIR, "chroma_db", "repository")
 PARENT_DOCS_DIR = os.path.join(_THIS_DIR, "parent_docs")
 
 CODE_EXTENSIONS = {
@@ -59,7 +63,8 @@ def _is_sensitive_file(filename: str) -> bool:
     lower = filename.lower()
     return any(marker in lower for marker in SENSITIVE_FILENAME_MARKERS)
 
-_vector_stores: dict[str, Chroma] = {}
+
+_vector_stores: dict[str, TfidfVectorStore] = {}
 
 
 def _parent_docs_path(repo_id: str) -> str:
@@ -109,13 +114,9 @@ def _load_repo_files(repo_path: str) -> list[dict]:
     return files
 
 
-def _get_vector_store(repo_id: str) -> Chroma:
+def _get_vector_store(repo_id: str) -> TfidfVectorStore:
     if repo_id not in _vector_stores:
-        _vector_stores[repo_id] = Chroma(
-            collection_name=f"repo_{repo_id}",
-            embedding_function=get_embeddings(),
-            persist_directory=os.path.join(CHROMA_BASE_DIR, repo_id),
-        )
+        _vector_stores[repo_id] = TfidfVectorStore()
     return _vector_stores[repo_id]
 
 
@@ -154,21 +155,21 @@ def retrieve_repository_knowledge(query: str, repo_id: str, top_k: int = 4) -> l
     """
     THIS is the function the router (and eventually the Planner Agent)
     calls for repo-specific questions. "content" here is a FULL FILE,
-    not a small chunk — small chunks are only used internally for search
+    not a small chunk -- small chunks are only used internally for search
     accuracy, the full parent file is what gets returned.
 
     Returns a list of {"content": str, "source": str}.
     Empty list if nothing relevant found, or if this repo hasn't been
-    ingested yet.
+    ingested yet (or the process restarted since it was ingested).
     """
     vector_store = _get_vector_store(repo_id)
     parent_docs = _load_parent_docs(repo_id)
 
-    if not parent_docs:
+    if not parent_docs or len(vector_store) == 0:
         return []
 
     # Search more child chunks than top_k, since multiple chunks can
-    # point to the same parent file — then dedupe down to top_k files.
+    # point to the same parent file -- then dedupe down to top_k files.
     child_results = vector_store.similarity_search(query, k=top_k * 3)
 
     seen_parent_ids = []
